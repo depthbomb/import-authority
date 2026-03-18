@@ -1,22 +1,21 @@
 {
 	"private": true,
 	"name": "import-authority",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"displayName": "Import Authority",
 	"description": "Opinionated JavaScript/TypeScript import organizer for VS Code",
 	"publisher": "CaprineLogic",
 	"repository": "https://github.com/depthbomb/import-authority",
-	"main": "./dist/extension.js",
+	"main": "./dist/extension.cjs",
 	"engines": {
 		"vscode": "^1.110.0"
 	},
 	"scripts": {
 		"vscode:prepublish": "yarn run package",
-		"compile": "yarn run check-types && yarn run lint && node esbuild.js",
+		"compile": "yarn run check-types && yarn run lint && tsdown",
 		"watch": "npm-run-all -p watch:*",
-		"watch:esbuild": "node esbuild.js --watch",
-		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-		"package": "yarn run check-types && yarn run lint && node esbuild.js --production",
+		"watch:tsdown": "tsdown",
+		"package": "yarn run compile",
 		"check-types": "tsc --noEmit",
 		"lint": "eslint src",
 		"test": "yarn run compile && tsx --test src/**/*.test.ts"
@@ -26,9 +25,9 @@
 		"@types/vscode": "^1.110.0",
 		"@typescript-eslint/eslint-plugin": "^8.57.1",
 		"@typescript-eslint/parser": "^8.57.1",
-		"esbuild": "^0.27.4",
 		"eslint": "^9.39.4",
 		"npm-run-all": "^4.1.5",
+		"tsdown": "^0.21.4",
 		"tsx": "^4.21.0",
 		"typescript": "^5.9.3"
 	},
@@ -175,5 +174,8 @@
 			}
 		}
 	},
-	"packageManager": "yarn@4.13.0"
+	"packageManager": "yarn@4.13.0",
+	"exports": {
+		".": "./dist/extension.cjs"
+	}
 }

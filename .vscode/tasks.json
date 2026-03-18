@@ -6,8 +6,7 @@
 		{
 			"label": "watch",
 			"dependsOn": [
-				"npm: watch:tsc",
-				"npm: watch:esbuild"
+				"npm: watch:tsdown"
 			],
 			"presentation": {
 				"reveal": "never"
@@ -19,23 +18,10 @@
 		},
 		{
 			"type": "npm",
-			"script": "watch:esbuild",
+			"script": "watch:tsdown",
 			"group": "build",
-			"problemMatcher": "$esbuild-watch",
 			"isBackground": true,
-			"label": "npm: watch:esbuild",
-			"presentation": {
-				"group": "watch",
-				"reveal": "never"
-			}
-		},
-		{
-			"type": "npm",
-			"script": "watch:tsc",
-			"group": "build",
-			"problemMatcher": "$tsc-watch",
-			"isBackground": true,
-			"label": "npm: watch:tsc",
+			"label": "npm: watch:tsdown",
 			"presentation": {
 				"group": "watch",
 				"reveal": "never"
