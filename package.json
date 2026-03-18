@@ -100,7 +100,7 @@
 				"importAuthority.sorting.detectPathAliases": {
 					"type": "boolean",
 					"default": true,
-					"description": "Detect alias prefixes from nearest tsconfig/jsconfig compilerOptions.paths."
+					"markdownDescription": "Detect alias prefixes from nearest tsconfig/jsconfig `compilerOptions.paths.`"
 				},
 				"importAuthority.sorting.aliasPrefixes": {
 					"type": "array",
@@ -108,7 +108,7 @@
 					"items": {
 						"type": "string"
 					},
-					"description": "Additional alias prefixes used for grouped sorting (for example, @app or ~)."
+					"markdownDescription": "Additional alias prefixes used for grouped sorting (for example, `@app` or `~`)."
 				},
 				"importAuthority.style.semicolonPolicy": {
 					"type": "string",
@@ -145,15 +145,20 @@
 					"minimum": 0,
 					"description": "Wrap named imports to multiple lines when the unbroken import line length exceeds this value. Use 0 to disable wrapping."
 				},
+				"importAuthority.style.alignFromKeyword": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "Align `from` across single-line imports using spacing."
+				},
 				"importAuthority.style.normalizeRelativePaths": {
 					"type": "boolean",
 					"default": false,
-					"description": "Normalize relative module specifiers and collapse trailing /index segments."
+					"markdownDescription": "Normalize relative module specifiers and collapse trailing `/index` segments."
 				},
 				"importAuthority.unusedImports.useBuiltInRemoval": {
 					"type": "boolean",
 					"default": false,
-					"description": "Remove unused imports using the language service before applying Import Authority sorting rules."
+					"markdownDescription": "Remove unused imports using the language service before applying _Import Authority_ sorting rules."
 				},
 				"importAuthority.unusedImports.useFallbackRemoval": {
 					"type": "boolean",
@@ -163,7 +168,7 @@
 				"importAuthority.features.enableFormattingProvider": {
 					"type": "boolean",
 					"default": false,
-					"description": "Enable Import Authority as a document/range formatting provider."
+					"markdownDescription": "Enable _Import Authority_ as a document/range formatting provider."
 				}
 			}
 		}

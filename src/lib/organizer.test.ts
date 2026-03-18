@@ -396,3 +396,115 @@ test('keeps named imports on one line when threshold is not exceeded', () => {
 
 	assert.equal(output, expected);
 });
+
+test('preserves trailing import comments and excludes them from length sorting', () => {
+	const input = [
+		"import { LongerName } from 'long-module';",
+		"import { A } from 'a'; // keep this trailing comment",
+		'',
+		'run();',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts');
+	const expected = [
+		"import { A } from 'a'; // keep this trailing comment",
+		"import { LongerName } from 'long-module';",
+		'',
+		'run();',
+	].join('\n');
+
+	assert.equal(output, expected);
+});
+
+test('aligns from keyword across single-line imports when enabled', () => {
+	const input = [
+		"import { One } from 'one';",
+		"import { Sixteen } from 'sixteen';",
+		"import { FourtyTwo } from 'fourty-two';",
+		'',
+		'run();',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts', { alignFromKeyword: true });
+	const expected = [
+		"import { One }       from 'one';",
+		"import { Sixteen }   from 'sixteen';",
+		"import { FourtyTwo } from 'fourty-two';",
+		'',
+		'run();',
+	].join('\n');
+
+	assert.equal(output, expected);
+});
+
+test('does not apply from-alignment to side-effect or multiline imports', () => {
+	const input = [
+		"import { AlphaLong, BetaLong, GammaLong } from 'really-long-module-name';",
+		"import { One } from 'one';",
+		"import 'setup';",
+		'',
+		'run();',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts', {
+		alignFromKeyword: true,
+		namedImportsWrapThreshold: 55,
+	});
+	const expected = [
+		"import 'setup';",
+		"import { One } from 'one';",
+		"import {",
+		"\tBetaLong,",
+		"\tAlphaLong,",
+		"\tGammaLong",
+		"} from 'really-long-module-name';",
+		'',
+		'run();',
+	].join('\n');
+
+	assert.equal(output, expected);
+});
+
+test('re-sorts by aligned lengths when from-alignment is enabled', () => {
+	const input = [
+		"import { VeryLongImportedIdentifier } from 'x';",
+		"import { A } from 'abcdefghijklmnop';",
+		'',
+		'run();',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts', { alignFromKeyword: true });
+	const expected = [
+		"import { VeryLongImportedIdentifier } from 'x';",
+		"import { A }                          from 'abcdefghijklmnop';",
+		'',
+		'run();',
+	].join('\n');
+
+	assert.equal(output, expected);
+});
+
+test('aligns from keyword per group when grouping is enabled', () => {
+	const input = [
+		"import { VeryLongBuiltinName } from 'node:fs';",
+		"import { A } from 'z-lib';",
+		"import { Mid } from 'another-lib';",
+		'',
+		'run();',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts', {
+		alignFromKeyword: true,
+		groupImports: true,
+	});
+	const expected = [
+		"import { VeryLongBuiltinName } from 'node:fs';",
+		'',
+		"import { A }   from 'z-lib';",
+		"import { Mid } from 'another-lib';",
+		'',
+		'run();',
+	].join('\n');
+
+	assert.equal(output, expected);
+});

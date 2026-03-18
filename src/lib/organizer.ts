@@ -18,6 +18,7 @@ export type OrganizerOptions = {
 	quoteStyle: QuoteStyle;
 	typeImportStyle: TypeImportStyle;
 	namedImportsWrapThreshold: number;
+	alignFromKeyword: boolean;
 	groupImports: boolean;
 	sideEffectPlacement: SideEffectPlacement;
 	moduleSpecifierOrder: ModuleSpecifierOrder;
@@ -33,6 +34,7 @@ export const DEFAULT_ORGANIZER_OPTIONS: OrganizerOptions = {
 	quoteStyle: 'preserve',
 	typeImportStyle: 'declaration',
 	namedImportsWrapThreshold: 0,
+	alignFromKeyword: false,
 	groupImports: false,
 	sideEffectPlacement: 'top',
 	moduleSpecifierOrder: 'none',
@@ -48,6 +50,7 @@ type ImportRecord = {
 	namespaceImport?: string;
 	namedImports: string[];
 	leadingComments: string[];
+	trailingComment?: string;
 	hadSemicolon: boolean;
 	isSideEffect: boolean;
 };
@@ -62,6 +65,7 @@ type PreparedImport = {
 	typeRank: number;
 	sideEffectRank: number;
 	groupRank: number;
+	commentPrefix: string;
 };
 
 const BUILTIN_SET = new Set(builtinModules.flatMap(name => [name, name.replace(/^node:/, '')]));
@@ -112,6 +116,15 @@ function collectLeadingComments(content: string, statement: ts.ImportDeclaration
 	return ranges.map(range => content.slice(range.pos, range.end).trimEnd());
 }
 
+function collectTrailingComment(content: string, statement: ts.ImportDeclaration): string | undefined {
+	const start = statement.getEnd();
+	const newlineIndex = content.indexOf('\n', start);
+	const lineEnd = newlineIndex === -1 ? content.length : newlineIndex;
+	const afterImport = content.slice(start, lineEnd);
+	const commentMatch = afterImport.match(/^\s*(\/\/.*|\/\*.*\*\/)\s*$/);
+	return commentMatch?.[1];
+}
+
 function toImportRecords(sourceFile: ts.SourceFile, content: string): { records: ImportRecord[]; imports: ts.ImportDeclaration[] } {
 	const records: ImportRecord[] = [];
 	const imports = sourceFile.statements.filter(ts.isImportDeclaration);
@@ -127,6 +140,7 @@ function toImportRecords(sourceFile: ts.SourceFile, content: string): { records:
 		const hadSemicolon = statement.getText(sourceFile).trimEnd().endsWith(';');
 		const clause = statement.importClause;
 		const leadingComments = collectLeadingComments(content, statement);
+		const trailingComment = collectTrailingComment(content, statement);
 
 		if (!clause) {
 			records.push({
@@ -135,6 +149,7 @@ function toImportRecords(sourceFile: ts.SourceFile, content: string): { records:
 				isTypeOnly: false,
 				namedImports: [],
 				leadingComments,
+				trailingComment,
 				hadSemicolon,
 				isSideEffect: true,
 			});
@@ -165,6 +180,7 @@ function toImportRecords(sourceFile: ts.SourceFile, content: string): { records:
 				namespaceImport,
 				namedImports: [...valueNamedImports, ...typeNamedImports],
 				leadingComments,
+				trailingComment,
 				hadSemicolon,
 				isSideEffect: false,
 			});
@@ -180,6 +196,7 @@ function toImportRecords(sourceFile: ts.SourceFile, content: string): { records:
 				namespaceImport,
 				namedImports: valueNamedImports,
 				leadingComments,
+				trailingComment,
 				hadSemicolon,
 				isSideEffect: false,
 			});
@@ -192,6 +209,7 @@ function toImportRecords(sourceFile: ts.SourceFile, content: string): { records:
 				isTypeOnly: true,
 				namedImports: typeNamedImports,
 				leadingComments: [],
+				trailingComment: undefined,
 				hadSemicolon,
 				isSideEffect: false,
 			});
@@ -272,7 +290,7 @@ function normalizeRelativeModuleName(moduleName: string): string {
 	return normalized;
 }
 
-function formatImport(record: ImportRecord, options: OrganizerOptions, eol: string): string {
+function formatImport(record: ImportRecord, options: OrganizerOptions, eol: string, includeTrailingComment = true): string {
 	const quote = options.quoteStyle === 'single'
 		? '\''
 		: options.quoteStyle === 'double'
@@ -288,7 +306,8 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 		: record.moduleName;
 
 	if (record.isSideEffect) {
-		return `import ${quote}${moduleName}${quote}${suffix}`;
+		const base = `import ${quote}${moduleName}${quote}${suffix}`;
+		return includeTrailingComment && record.trailingComment ? `${base} ${record.trailingComment}` : base;
 	}
 
 	const prefixParts: string[] = [];
@@ -323,7 +342,8 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 		parts.push(formattedNamed);
 	}
 
-	return `import${typeKeyword} ${parts.join(', ')} from ${quote}${moduleName}${quote}${suffix}`;
+	const base = `import${typeKeyword} ${parts.join(', ')} from ${quote}${moduleName}${quote}${suffix}`;
+	return includeTrailingComment && record.trailingComment ? `${base} ${record.trailingComment}` : base;
 }
 
 function canMergeRecord(record: ImportRecord, policy: DuplicateImportPolicy): boolean {
@@ -369,6 +389,13 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 
 		existing.namedImports.push(...record.namedImports);
 		existing.hadSemicolon ||= record.hadSemicolon;
+		if (record.trailingComment) {
+			if (!existing.trailingComment) {
+				existing.trailingComment = record.trailingComment;
+			} else if (existing.trailingComment !== record.trailingComment) {
+				existing.leadingComments.push(record.trailingComment);
+			}
+		}
 		if (record.leadingComments.length > 0) {
 			existing.leadingComments.push(...record.leadingComments);
 		}
@@ -401,7 +428,11 @@ function rebuildContent(content: string, imports: ts.ImportDeclaration[], organi
 
 	const eol = detectEol(content);
 	const firstImportStart = imports[0].getFullStart();
-	const lastImportEnd = imports[imports.length - 1].getEnd();
+	const lastImport = imports[imports.length - 1];
+	const lastImportEnd = (() => {
+		const newlineIndex = content.indexOf('\n', lastImport.getEnd());
+		return newlineIndex === -1 ? content.length : newlineIndex;
+	})();
 
 	const beforeImports = content.slice(0, firstImportStart);
 	const afterImports = content.slice(lastImportEnd).replace(/^(?:\s*\r?\n)+/, '');
@@ -474,12 +505,14 @@ function prepareImports(records: ImportRecord[], options: OrganizerOptions, eol:
 			? normalizeRelativeModuleName(record.moduleName)
 			: record.moduleName;
 		const group = classifyGroup(moduleName, options.aliasPrefixes);
-		const sortText = formatImport({ ...record, moduleName }, options, eol);
+		const normalizedRecord = { ...record, moduleName };
+		const sortText = formatImport(normalizedRecord, options, eol, false);
+		const text = formatImport(normalizedRecord, options, eol, true);
 		const commentPrefix = record.leadingComments.length > 0
 			? `${record.leadingComments.join(eol)}${eol}`
 			: '';
 		prepared.push({
-			text: `${commentPrefix}${sortText}`,
+			text,
 			sortText,
 			moduleName,
 			defaultRank: options.placeDefaultAndNamespaceImportsLast && (record.defaultImport || record.namespaceImport) ? 1 : 0,
@@ -488,10 +521,104 @@ function prepareImports(records: ImportRecord[], options: OrganizerOptions, eol:
 				? options.sideEffectPlacement === 'top' ? 0 : 1
 				: options.sideEffectPlacement === 'top' ? 1 : 0,
 			groupRank: options.groupImports ? getGroupRank(group) : 0,
+			commentPrefix,
 		});
 	}
 
 	return prepared;
+}
+
+function alignFromKeyword(entries: PreparedImport[]): PreparedImport[] {
+	const leftLengths = entries
+		.filter(entry => !entry.sortText.includes('\n'))
+		.map(entry => entry.sortText.indexOf(' from '))
+		.filter(index => index > 0);
+
+	if (leftLengths.length === 0) {
+		return entries;
+	}
+
+	const maxLeft = Math.max(...leftLengths);
+	return entries.map(entry => {
+		if (entry.sortText.includes('\n')) {
+			return entry;
+		}
+		const fromIndexSort = entry.sortText.indexOf(' from ');
+		if (fromIndexSort <= 0) {
+			return entry;
+		}
+		const leftSort = entry.sortText.slice(0, fromIndexSort).replace(/\s+$/, '');
+		const rightSort = entry.sortText.slice(fromIndexSort + ' from '.length);
+		const spaces = ' '.repeat(Math.max(1, maxLeft - leftSort.length + 1));
+
+		const fromIndexText = entry.text.indexOf(' from ');
+		if (fromIndexText <= 0) {
+			return {
+				...entry,
+				sortText: `${leftSort}${spaces}from ${rightSort}`,
+			};
+		}
+		const leftText = entry.text.slice(0, fromIndexText).replace(/\s+$/, '');
+		const rightText = entry.text.slice(fromIndexText + ' from '.length);
+		return {
+			...entry,
+			text: `${leftText}${spaces}from ${rightText}`,
+			sortText: `${leftSort}${spaces}from ${rightSort}`,
+		};
+	});
+}
+
+function renderEntry(entry: PreparedImport): string {
+	return `${entry.commentPrefix}${entry.text}`;
+}
+
+function blockKey(entry: PreparedImport): string {
+	return `${entry.typeRank}|${entry.sideEffectRank}|${entry.groupRank}`;
+}
+
+function splitIntoBlocks(prepared: PreparedImport[]): PreparedImport[][] {
+	if (prepared.length === 0) {
+		return [];
+	}
+
+	const blocks: PreparedImport[][] = [];
+	let currentBlock: PreparedImport[] = [prepared[0]];
+	let lastKey = blockKey(prepared[0]);
+
+	for (let index = 1; index < prepared.length; index += 1) {
+		const entry = prepared[index];
+		const key = blockKey(entry);
+		if (key !== lastKey) {
+			blocks.push(currentBlock);
+			currentBlock = [entry];
+			lastKey = key;
+			continue;
+		}
+		currentBlock.push(entry);
+	}
+	blocks.push(currentBlock);
+	return blocks;
+}
+
+function applyAlignmentAndResort(prepared: PreparedImport[], options: OrganizerOptions): PreparedImport[] {
+	if (!options.alignFromKeyword) {
+		return prepared;
+	}
+
+	if (!options.groupImports) {
+		const aligned = alignFromKeyword(prepared);
+		aligned.sort((a, b) => comparePreparedImports(a, b, options));
+		return aligned;
+	}
+
+	const blocks = splitIntoBlocks(prepared);
+	const result: PreparedImport[] = [];
+	for (const block of blocks) {
+		const alignedBlock = alignFromKeyword(block);
+		alignedBlock.sort((a, b) => comparePreparedImports(a, b, options));
+		result.push(...alignedBlock);
+	}
+	return result;
 }
 
 function joinImports(prepared: PreparedImport[], eol: string, grouped: boolean): string {
@@ -499,26 +626,10 @@ function joinImports(prepared: PreparedImport[], eol: string, grouped: boolean):
 		return '';
 	}
 	if (!grouped) {
-		return prepared.map(entry => entry.text).join(eol);
+		return prepared.map(renderEntry).join(eol);
 	}
 
-	const blocks: string[] = [];
-	let currentBlock: PreparedImport[] = [];
-	let lastKey = `${prepared[0].typeRank}|${prepared[0].sideEffectRank}|${prepared[0].groupRank}`;
-
-	for (const entry of prepared) {
-		const key = `${entry.typeRank}|${entry.sideEffectRank}|${entry.groupRank}`;
-		if (key !== lastKey) {
-			blocks.push(currentBlock.map(item => item.text).join(eol));
-			currentBlock = [entry];
-			lastKey = key;
-			continue;
-		}
-		currentBlock.push(entry);
-	}
-	if (currentBlock.length > 0) {
-		blocks.push(currentBlock.map(item => item.text).join(eol));
-	}
+	const blocks = splitIntoBlocks(prepared).map(block => block.map(renderEntry).join(eol));
 
 	return blocks.join(`${eol}${eol}`);
 }
@@ -627,8 +738,9 @@ export function organizeImportsContent(
 
 	const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
 	const eol = detectEol(content);
-	const prepared = prepareImports(baseRecords, resolvedOptions, eol);
+	let prepared = prepareImports(baseRecords, resolvedOptions, eol);
 	prepared.sort((a, b) => comparePreparedImports(a, b, resolvedOptions));
+	prepared = applyAlignmentAndResort(prepared, resolvedOptions);
 
 	const organizedImports = joinImports(prepared, eol, resolvedOptions.groupImports);
 	return rebuildContent(content, imports, organizedImports);

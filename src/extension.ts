@@ -180,6 +180,7 @@ function getOptions(document: vscode.TextDocument): ExtensionOptions {
 		quoteStyle,
 		typeImportStyle,
 		namedImportsWrapThreshold: Math.max(0, config.get<number>('style.namedImportsWrapThreshold', 0)),
+		alignFromKeyword: config.get<boolean>('style.alignFromKeyword', false),
 		normalizeRelativePaths: config.get<boolean>('style.normalizeRelativePaths', false),
 	};
 
