@@ -2,6 +2,8 @@
 
 Opinionated import organizer for JavaScript and TypeScript in VS Code.
 
+**Get the extension [here](https://marketplace.visualstudio.com/items?itemName=CaprineLogic.import-authority)!**
+
 ## Commands
 
 - `Organize Imports`: applies rules directly to the active document.
