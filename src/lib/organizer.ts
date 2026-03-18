@@ -426,27 +426,33 @@ function rebuildContent(content: string, imports: ts.ImportDeclaration[], organi
 		return content;
 	}
 
-	const eol = detectEol(content);
-	const firstImportStart = imports[0].getFullStart();
-	const lastImport = imports[imports.length - 1];
+	const eol                   = detectEol(content);
+	const firstImport           = imports[0];
+	const firstImportStart      = firstImport.getFullStart();
+	const firstImportTokenStart = firstImport.getStart();
+	const lastImport            = imports[imports.length - 1];
 	const lastImportEnd = (() => {
 		const newlineIndex = content.indexOf('\n', lastImport.getEnd());
 		return newlineIndex === -1 ? content.length : newlineIndex;
 	})();
 
-	const beforeImports = content.slice(0, firstImportStart);
-	const afterImports = content.slice(lastImportEnd).replace(/^(?:\s*\r?\n)+/, '');
-	const importBlock = organizedImports.trim();
+	const beforeImports       = content.slice(0, firstImportStart);
+	const leadingTrivia       = content.slice(firstImportStart, firstImportTokenStart);
+	const preservedLeadingGap = /^[\s]*$/.test(leadingTrivia) ? leadingTrivia : '';
+	const afterImports        = content.slice(lastImportEnd).replace(/^(?:\s*\r?\n)+/, '');
+	const importBlock         = organizedImports.trim();
 
 	if (!importBlock) {
 		return `${beforeImports}${afterImports}`;
 	}
 
+	const beforeWithGap = `${beforeImports}${preservedLeadingGap}`;
+
 	if (!afterImports) {
-		return `${beforeImports}${importBlock}${eol}`;
+		return `${beforeWithGap}${importBlock}${eol}`;
 	}
 
-	return `${beforeImports}${importBlock}${eol}${eol}${afterImports}`;
+	return `${beforeWithGap}${importBlock}${eol}${eol}${afterImports}`;
 }
 
 function isRelativeModule(moduleName: string): boolean {

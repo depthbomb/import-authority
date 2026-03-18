@@ -3,7 +3,15 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { statSync, existsSync, readFileSync } from 'node:fs';
 import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
-import type { DuplicateImportPolicy, ModuleSpecifierOrder, OrganizerOptions, QuoteStyle, SemicolonPolicy, SideEffectPlacement, TypeImportStyle } from './lib/organizer';
+import type {
+	QuoteStyle,
+	SemicolonPolicy,
+	TypeImportStyle,
+	OrganizerOptions,
+	SideEffectPlacement,
+	ModuleSpecifierOrder,
+	DuplicateImportPolicy
+} from './lib/organizer';
 
 const COMMAND_ORGANIZE = 'import-authority.organizeImports';
 const COMMAND_PREVIEW  = 'import-authority.previewOrganizeImports';

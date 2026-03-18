@@ -508,3 +508,30 @@ test('aligns from keyword per group when grouping is enabled', () => {
 
 	assert.equal(output, expected);
 });
+
+test('preserves separation when imports appear after executable code', () => {
+	const input = [
+		'if (!condition) {',
+		"\tthrow new Error();",
+		'}',
+		'',
+		"import 'something';",
+		"import 'something-else';",
+		'',
+		'run();',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts');
+	const expected = [
+		'if (!condition) {',
+		"\tthrow new Error();",
+		'}',
+		'',
+		"import 'something';",
+		"import 'something-else';",
+		'',
+		'run();',
+	].join('\n');
+
+	assert.equal(output, expected);
+});
