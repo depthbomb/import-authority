@@ -4,6 +4,7 @@
 	"version": "0.1.0",
 	"displayName": "Import Authority",
 	"description": "Opinionated JavaScript/TypeScript import organizer for VS Code",
+	"repository": "https://github.com/depthbomb/import-authority",
 	"main": "./dist/extension.js",
 	"engines": {
 		"vscode": "^1.110.0"
