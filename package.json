@@ -1,0 +1,172 @@
+{
+	"private": true,
+	"name": "import-authority",
+	"version": "0.1.0",
+	"displayName": "Import Authority",
+	"description": "Opinionated JavaScript/TypeScript import organizer for VS Code",
+	"main": "./dist/extension.js",
+	"engines": {
+		"vscode": "^1.99.0"
+	},
+	"scripts": {
+		"vscode:prepublish": "yarn run package",
+		"compile": "yarn run check-types && yarn run lint && node esbuild.js",
+		"watch": "npm-run-all -p watch:*",
+		"watch:esbuild": "node esbuild.js --watch",
+		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+		"package": "yarn run check-types && yarn run lint && node esbuild.js --production",
+		"check-types": "tsc --noEmit",
+		"lint": "eslint src",
+		"test": "yarn run compile && tsx --test src/**/*.test.ts"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.15",
+		"@types/vscode": "^1.110.0",
+		"@typescript-eslint/eslint-plugin": "^8.57.1",
+		"@typescript-eslint/parser": "^8.57.1",
+		"esbuild": "^0.27.4",
+		"eslint": "^9.39.4",
+		"npm-run-all": "^4.1.5",
+		"tsx": "^4.20.6",
+		"typescript": "^5.9.3"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onLanguage:javascript",
+		"onLanguage:javascriptreact",
+		"onLanguage:typescript",
+		"onLanguage:typescriptreact"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "import-authority.organizeImports",
+				"title": "Organize Imports"
+			},
+			{
+				"command": "import-authority.previewOrganizeImports",
+				"title": "Preview Organized Imports"
+			}
+		],
+		"configuration": {
+			"title": "Import Authority",
+			"properties": {
+				"importAuthority.sorting.placeTypeImportsLast": {
+					"type": "boolean",
+					"default": true,
+					"description": "Place type-only imports below non-type imports."
+				},
+				"importAuthority.sorting.placeDefaultAndNamespaceImportsLast": {
+					"type": "boolean",
+					"default": true,
+					"description": "Place default and namespace imports below plain named imports."
+				},
+				"importAuthority.sorting.duplicateImportPolicy": {
+					"type": "string",
+					"enum": [
+						"always",
+						"namedOnly",
+						"never"
+					],
+					"default": "always",
+					"description": "Duplicate import consolidation policy."
+				},
+				"importAuthority.sorting.groupImports": {
+					"type": "boolean",
+					"default": false,
+					"description": "Insert blank lines between import groups (builtin, external, aliased, relative, type-only)."
+				},
+				"importAuthority.sorting.sideEffectPlacement": {
+					"type": "string",
+					"enum": [
+						"top",
+						"bottom"
+					],
+					"default": "top",
+					"description": "Place side-effect imports at the top or bottom of non-type imports."
+				},
+				"importAuthority.sorting.moduleSpecifierOrder": {
+					"type": "string",
+					"enum": [
+						"none",
+						"length",
+						"alpha"
+					],
+					"default": "none",
+					"description": "Optional secondary sort key by module specifier after line-length sorting."
+				},
+				"importAuthority.sorting.detectPathAliases": {
+					"type": "boolean",
+					"default": true,
+					"description": "Detect alias prefixes from nearest tsconfig/jsconfig compilerOptions.paths."
+				},
+				"importAuthority.sorting.aliasPrefixes": {
+					"type": "array",
+					"default": [],
+					"items": {
+						"type": "string"
+					},
+					"description": "Additional alias prefixes used for grouped sorting (for example, @app or ~)."
+				},
+				"importAuthority.style.semicolonPolicy": {
+					"type": "string",
+					"enum": [
+						"always",
+						"never",
+						"preserve"
+					],
+					"default": "preserve",
+					"description": "Whether organized imports should add semicolons, remove semicolons, or preserve existing semicolons."
+				},
+				"importAuthority.style.quoteStyle": {
+					"type": "string",
+					"enum": [
+						"single",
+						"double",
+						"preserve"
+					],
+					"default": "preserve",
+					"description": "Quote style for organized imports."
+				},
+				"importAuthority.style.typeImportStyle": {
+					"type": "string",
+					"enum": [
+						"declaration",
+						"inline"
+					],
+					"default": "declaration",
+					"description": "Use import type declarations or inline type specifiers for type-only named imports."
+				},
+				"importAuthority.style.namedImportsWrapThreshold": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"description": "Wrap named imports to multiple lines when the unbroken import line length exceeds this value. Use 0 to disable wrapping."
+				},
+				"importAuthority.style.normalizeRelativePaths": {
+					"type": "boolean",
+					"default": false,
+					"description": "Normalize relative module specifiers and collapse trailing /index segments."
+				},
+				"importAuthority.unusedImports.useBuiltInRemoval": {
+					"type": "boolean",
+					"default": false,
+					"description": "Remove unused imports using the language service before applying Import Authority sorting rules."
+				},
+				"importAuthority.unusedImports.useFallbackRemoval": {
+					"type": "boolean",
+					"default": false,
+					"description": "When unused-import removal provider makes no edits or fails, run a heuristic file scan fallback to prune unused imports."
+				},
+				"importAuthority.features.enableFormattingProvider": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable Import Authority as a document/range formatting provider."
+				}
+			}
+		}
+	},
+	"packageManager": "yarn@4.13.0"
+}

@@ -1,0 +1,6 @@
+out
+dist
+.yarn/cache
+node_modules
+.vscode-test/
+*.vsix
