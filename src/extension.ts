@@ -13,6 +13,17 @@ import type {
 	DuplicateImportPolicy
 } from './lib/organizer';
 
+type AliasPrefixCacheEntry = {
+	mtimeMs: number;
+	prefixes: string[];
+};
+
+type ExtensionOptions = {
+	organizer: OrganizerOptions;
+	removeUnusedImportsFirst: boolean;
+	fallbackRemoveUnusedImportsByScan: boolean;
+};
+
 const COMMAND_ORGANIZE = 'import-authority.organizeImports';
 const COMMAND_PREVIEW  = 'import-authority.previewOrganizeImports';
 const PREVIEW_SCHEME   = 'import-authority-preview';
@@ -31,11 +42,6 @@ const DOCUMENT_SELECTOR: vscode.DocumentSelector = [
 	{ language: 'javascript',      scheme: 'untitled' },
 	{ language: 'javascriptreact', scheme: 'untitled' },
 ];
-
-type AliasPrefixCacheEntry = {
-	mtimeMs: number;
-	prefixes: string[];
-};
 
 const aliasPrefixCache = new Map<string, AliasPrefixCacheEntry>();
 
@@ -59,12 +65,6 @@ class PreviewContentProvider implements vscode.TextDocumentContentProvider {
 		this.previews.clear();
 	}
 }
-
-type ExtensionOptions = {
-	organizer: OrganizerOptions;
-	removeUnusedImportsFirst: boolean;
-	fallbackRemoveUnusedImportsByScan: boolean;
-};
 
 function isSupportedDocument(document: vscode.TextDocument): boolean {
 	if (document.uri.scheme !== 'file' && document.uri.scheme !== 'untitled') {

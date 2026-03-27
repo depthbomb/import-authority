@@ -535,3 +535,27 @@ test('preserves separation when imports appear after executable code', () => {
 
 	assert.equal(output, expected);
 });
+
+test('preserves executable statements between separate import blocks', () => {
+	const input = [
+		"import { platform, assertRuntime } from '@depthbomb/node-common/platform';",
+		'',
+		"assertRuntime('bun');",
+		'',
+		"import '@extensions/string';",
+		"import '@abraham/reflection';",
+		"import 'temporal-polyfill/global';",
+		"import { env } from '@env';",
+		"import { container } from '@container';",
+		"import { WeatherGoat } from '@lib/client';",
+		"import { CliService } from '@services/cli';",
+		"import { Flag } from '@depthbomb/common/state';",
+		"import { logger, reportError } from '@lib/logger';",
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.match(output, /assertRuntime\('bun'\);/);
+	assert.match(output, /import \{ platform, assertRuntime \} from '@depthbomb\/node-common\/platform';/);
+	assert.match(output, /import '@extensions\/string';/);
+	assert.ok(output.indexOf("assertRuntime('bun');") < output.indexOf("import '@extensions/string';"));
+});

@@ -1,14 +1,14 @@
+import ts from 'typescript';
+import path from 'node:path';
 import { builtinModules } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-import ts from 'typescript';
 
-export type SemicolonPolicy = 'always' | 'never' | 'preserve';
-export type QuoteStyle = 'single' | 'double' | 'preserve';
-export type SideEffectPlacement = 'top' | 'bottom';
-export type ModuleSpecifierOrder = 'none' | 'length' | 'alpha';
+export type SemicolonPolicy       = 'always' | 'never' | 'preserve';
+export type QuoteStyle            = 'single' | 'double' | 'preserve';
+export type SideEffectPlacement   = 'top' | 'bottom';
+export type ModuleSpecifierOrder  = 'none' | 'length' | 'alpha';
 export type DuplicateImportPolicy = 'always' | 'namedOnly' | 'never';
-export type TypeImportStyle = 'declaration' | 'inline';
+export type TypeImportStyle       = 'declaration' | 'inline';
 
 export type OrganizerOptions = {
 	placeTypeImportsLast: boolean;
@@ -125,9 +125,12 @@ function collectTrailingComment(content: string, statement: ts.ImportDeclaration
 	return commentMatch?.[1];
 }
 
-function toImportRecords(sourceFile: ts.SourceFile, content: string): { records: ImportRecord[]; imports: ts.ImportDeclaration[] } {
+function toImportRecords(
+	sourceFile: ts.SourceFile,
+	content: string,
+	imports = sourceFile.statements.filter(ts.isImportDeclaration),
+): { records: ImportRecord[]; imports: ts.ImportDeclaration[] } {
 	const records: ImportRecord[] = [];
-	const imports = sourceFile.statements.filter(ts.isImportDeclaration);
 
 	for (const statement of imports) {
 		if (!ts.isStringLiteral(statement.moduleSpecifier)) {
@@ -219,10 +222,34 @@ function toImportRecords(sourceFile: ts.SourceFile, content: string): { records:
 	return { records, imports };
 }
 
+function getContiguousImportBlocks(sourceFile: ts.SourceFile): Array<ts.ImportDeclaration[]> {
+	const blocks = [] as Array<ts.ImportDeclaration[]>;
+
+	let current = [] as ts.ImportDeclaration[];
+
+	for (const statement of sourceFile.statements) {
+		if (ts.isImportDeclaration(statement)) {
+			current.push(statement);
+			continue;
+		}
+		if (current.length > 0) {
+			blocks.push(current);
+			current = [];
+		}
+	}
+
+	if (current.length > 0) {
+		blocks.push(current);
+	}
+
+	return blocks;
+}
+
 function compareByLengthThenAlpha(a: string, b: string): number {
 	if (a.length === b.length) {
 		return a.localeCompare(b);
 	}
+
 	return a.length - b.length;
 }
 
@@ -243,22 +270,28 @@ function comparePreparedImports(a: PreparedImport, b: PreparedImport, options: O
 	if (a.typeRank !== b.typeRank) {
 		return a.typeRank - b.typeRank;
 	}
+
 	if (a.sideEffectRank !== b.sideEffectRank) {
 		return a.sideEffectRank - b.sideEffectRank;
 	}
+
 	if (a.groupRank !== b.groupRank) {
 		return a.groupRank - b.groupRank;
 	}
+
 	if (a.defaultRank !== b.defaultRank) {
 		return a.defaultRank - b.defaultRank;
 	}
+
 	if (a.sortText.length !== b.sortText.length) {
 		return a.sortText.length - b.sortText.length;
 	}
+
 	const specifierComparison = compareModuleSpecifier(a.moduleName, b.moduleName, options.moduleSpecifierOrder);
 	if (specifierComparison !== 0) {
 		return specifierComparison;
 	}
+
 	return a.sortText.localeCompare(b.sortText);
 }
 
@@ -275,18 +308,22 @@ function normalizeRelativeModuleName(moduleName: string): string {
 	if (normalized === '.') {
 		normalized = './';
 	}
+
 	if (!normalized.startsWith('.') && !normalized.startsWith('/')) {
 		normalized = `./${normalized}`;
 	}
+
 	if (normalized.endsWith('/index')) {
 		normalized = normalized.slice(0, -('/index'.length));
 		if (normalized === '') {
 			normalized = '.';
 		}
 	}
+
 	if (normalized === '.') {
 		return './';
 	}
+
 	return normalized;
 }
 
@@ -310,14 +347,17 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 		return includeTrailingComment && record.trailingComment ? `${base} ${record.trailingComment}` : base;
 	}
 
-	const prefixParts: string[] = [];
+	const prefixParts = [] as string[];
+
 	if (record.defaultImport) {
 		prefixParts.push(record.defaultImport);
 	}
+
 	if (record.namespaceImport) {
 		prefixParts.push(`* as ${record.namespaceImport}`);
 	}
-	const parts: string[] = [...prefixParts];
+
+	const parts = [...prefixParts] as string[];
 	const shouldUseInlineTypeNamedImports = record.isTypeOnly
 		&& options.typeImportStyle === 'inline'
 		&& !record.defaultImport
@@ -330,6 +370,7 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 			? named.map(item => `type ${item}`)
 			: named;
 		const singleLineNamed = `{ ${namedItems.join(', ')} }`;
+
 		let formattedNamed = singleLineNamed;
 
 		if (options.namedImportsWrapThreshold > 0 && namedItems.length > 1) {
@@ -339,10 +380,12 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 				formattedNamed = `{${eol}\t${namedItems.join(`,${eol}\t`)}${eol}}`;
 			}
 		}
+
 		parts.push(formattedNamed);
 	}
 
 	const base = `import${typeKeyword} ${parts.join(', ')} from ${quote}${moduleName}${quote}${suffix}`;
+
 	return includeTrailingComment && record.trailingComment ? `${base} ${record.trailingComment}` : base;
 }
 
@@ -350,9 +393,11 @@ function canMergeRecord(record: ImportRecord, policy: DuplicateImportPolicy): bo
 	if (policy === 'always') {
 		return true;
 	}
+
 	if (policy === 'never') {
 		return false;
 	}
+
 	return !record.defaultImport && !record.namespaceImport;
 }
 
@@ -361,14 +406,15 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		return [...records];
 	}
 
-	const merged = new Map<string, ImportRecord>();
-	const passthrough: ImportRecord[] = [];
+	const merged      = new Map<string, ImportRecord>();
+	const passthrough = [] as ImportRecord[];
 
 	for (const record of records) {
 		if (!canMergeRecord(record, policy)) {
 			passthrough.push(record);
 			continue;
 		}
+
 		const key = [
 			record.isTypeOnly ? 'type' : 'value',
 			record.moduleName,
@@ -376,14 +422,15 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 			record.namespaceImport ?? '',
 			record.isSideEffect ? 'side-effect' : 'bound',
 		].join('|');
-		const existing = merged.get(key);
 
+		const existing = merged.get(key);
 		if (!existing) {
 			merged.set(key, {
 				...record,
 				namedImports: [...record.namedImports],
 				leadingComments: [...record.leadingComments],
 			});
+
 			continue;
 		}
 
@@ -396,6 +443,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 				existing.leadingComments.push(record.trailingComment);
 			}
 		}
+
 		if (record.leadingComments.length > 0) {
 			existing.leadingComments.push(...record.leadingComments);
 		}
@@ -405,6 +453,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		if (record.namedImports.length > 1) {
 			record.namedImports = Array.from(new Set(record.namedImports));
 		}
+
 		if (record.leadingComments.length > 1) {
 			record.leadingComments = Array.from(new Set(record.leadingComments));
 		}
@@ -421,7 +470,7 @@ function withDefaults(options?: Partial<OrganizerOptions>): OrganizerOptions {
 	};
 }
 
-function rebuildContent(content: string, imports: ts.ImportDeclaration[], organizedImports: string): string {
+function rebuildImportBlock(content: string, imports: ts.ImportDeclaration[], organizedImports: string): string {
 	if (imports.length === 0) {
 		return content;
 	}
@@ -469,10 +518,12 @@ function isAliasedModule(moduleName: string, aliasPrefixes: string[]): boolean {
 		if (!prefix) {
 			continue;
 		}
+
 		if (moduleName === prefix || moduleName.startsWith(`${prefix}/`)) {
 			return true;
 		}
 	}
+
 	return false;
 }
 
@@ -481,12 +532,15 @@ function classifyGroup(moduleName: string, aliasPrefixes: string[]): ImportGroup
 	if (BUILTIN_SET.has(normalized)) {
 		return 'builtin';
 	}
+
 	if (isRelativeModule(moduleName)) {
 		return 'relative';
 	}
+
 	if (isAliasedModule(moduleName, aliasPrefixes)) {
 		return 'aliased';
 	}
+
 	return 'external';
 }
 
@@ -517,6 +571,7 @@ function prepareImports(records: ImportRecord[], options: OrganizerOptions, eol:
 		const commentPrefix = record.leadingComments.length > 0
 			? `${record.leadingComments.join(eol)}${eol}`
 			: '';
+
 		prepared.push({
 			text,
 			sortText,
@@ -549,10 +604,12 @@ function alignFromKeyword(entries: PreparedImport[]): PreparedImport[] {
 		if (entry.sortText.includes('\n')) {
 			return entry;
 		}
+
 		const fromIndexSort = entry.sortText.indexOf(' from ');
 		if (fromIndexSort <= 0) {
 			return entry;
 		}
+
 		const leftSort = entry.sortText.slice(0, fromIndexSort).replace(/\s+$/, '');
 		const rightSort = entry.sortText.slice(fromIndexSort + ' from '.length);
 		const spaces = ' '.repeat(Math.max(1, maxLeft - leftSort.length + 1));
@@ -564,8 +621,10 @@ function alignFromKeyword(entries: PreparedImport[]): PreparedImport[] {
 				sortText: `${leftSort}${spaces}from ${rightSort}`,
 			};
 		}
-		const leftText = entry.text.slice(0, fromIndexText).replace(/\s+$/, '');
+
+		const leftText  = entry.text.slice(0, fromIndexText).replace(/\s+$/, '');
 		const rightText = entry.text.slice(fromIndexText + ' from '.length);
+
 		return {
 			...entry,
 			text: `${leftText}${spaces}from ${rightText}`,
@@ -582,14 +641,15 @@ function blockKey(entry: PreparedImport): string {
 	return `${entry.typeRank}|${entry.sideEffectRank}|${entry.groupRank}`;
 }
 
-function splitIntoBlocks(prepared: PreparedImport[]): PreparedImport[][] {
+function splitIntoBlocks(prepared: PreparedImport[]): Array<PreparedImport[]> {
 	if (prepared.length === 0) {
 		return [];
 	}
 
-	const blocks: PreparedImport[][] = [];
-	let currentBlock: PreparedImport[] = [prepared[0]];
-	let lastKey = blockKey(prepared[0]);
+	const blocks = [] as Array<PreparedImport[]>;
+
+	let currentBlock = [prepared[0]] as PreparedImport[];
+	let lastKey      = blockKey(prepared[0]);
 
 	for (let index = 1; index < prepared.length; index += 1) {
 		const entry = prepared[index];
@@ -600,9 +660,12 @@ function splitIntoBlocks(prepared: PreparedImport[]): PreparedImport[][] {
 			lastKey = key;
 			continue;
 		}
+
 		currentBlock.push(entry);
 	}
+
 	blocks.push(currentBlock);
+
 	return blocks;
 }
 
@@ -618,12 +681,14 @@ function applyAlignmentAndResort(prepared: PreparedImport[], options: OrganizerO
 	}
 
 	const blocks = splitIntoBlocks(prepared);
-	const result: PreparedImport[] = [];
+	const result = [] as PreparedImport[];
+
 	for (const block of blocks) {
 		const alignedBlock = alignFromKeyword(block);
 		alignedBlock.sort((a, b) => comparePreparedImports(a, b, options));
 		result.push(...alignedBlock);
 	}
+
 	return result;
 }
 
@@ -631,6 +696,7 @@ function joinImports(prepared: PreparedImport[], eol: string, grouped: boolean):
 	if (prepared.length === 0) {
 		return '';
 	}
+
 	if (!grouped) {
 		return prepared.map(renderEntry).join(eol);
 	}
@@ -647,13 +713,16 @@ function collectUsedIdentifiers(sourceFile: ts.SourceFile): Set<string> {
 		if (ts.isImportDeclaration(node)) {
 			return;
 		}
+
 		if (ts.isIdentifier(node)) {
 			used.add(node.text);
 		}
+
 		ts.forEachChild(node, visit);
 	};
 
 	visit(sourceFile);
+
 	return used;
 }
 
@@ -669,7 +738,7 @@ function pruneUnusedFromImport(
 	sourceFile: ts.SourceFile,
 	usedIdentifiers: Set<string>,
 ): string | null {
-	const clause = statement.importClause;
+	const clause        = statement.importClause;
 	const statementText = statement.getText(sourceFile);
 	if (!clause) {
 		return statementText;
@@ -690,9 +759,11 @@ function pruneUnusedFromImport(
 	if (keepDefaultImport && clause.name) {
 		parts.push(clause.name.text);
 	}
+
 	if (keepNamespaceImport && namedBindings && ts.isNamespaceImport(namedBindings)) {
 		parts.push(`* as ${namedBindings.name.text}`);
 	}
+
 	if (keptNamedImports.length > 0) {
 		parts.push(`{ ${keptNamedImports.map(formatImportSpecifier).join(', ')} }`);
 	}
@@ -705,28 +776,37 @@ function pruneUnusedFromImport(
 
 export function removeUnusedImportsByScan(content: string, filePath = 'file.ts'): string {
 	const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
-	const imports = sourceFile.statements.filter(ts.isImportDeclaration);
-	if (imports.length === 0) {
+	const importBlocks = getContiguousImportBlocks(sourceFile);
+	if (importBlocks.length === 0) {
 		return content;
 	}
 
 	const usedIdentifiers = collectUsedIdentifiers(sourceFile);
 	const eol = detectEol(content);
-	const keptImports: string[] = [];
+	let nextContent = content;
 
-	for (const statement of imports) {
-		const pruned = pruneUnusedFromImport(statement, sourceFile, usedIdentifiers);
-		if (!pruned) {
-			continue;
+	for (let index = importBlocks.length - 1; index >= 0; index--) {
+		const block = importBlocks[index];
+		const keptImports: string[] = [];
+
+		for (const statement of block) {
+			const pruned = pruneUnusedFromImport(statement, sourceFile, usedIdentifiers);
+			if (!pruned) {
+				continue;
+			}
+
+			const leadingComments = collectLeadingComments(content, statement);
+			if (leadingComments.length > 0) {
+				keptImports.push(...leadingComments);
+			}
+
+			keptImports.push(pruned);
 		}
-		const leadingComments = collectLeadingComments(content, statement);
-		if (leadingComments.length > 0) {
-			keptImports.push(...leadingComments);
-		}
-		keptImports.push(pruned);
+
+		nextContent = rebuildImportBlock(nextContent, block, keptImports.join(eol));
 	}
 
-	return rebuildContent(content, imports, keptImports.join(eol));
+	return nextContent;
 }
 
 export function organizeImportsContent(
@@ -736,24 +816,31 @@ export function organizeImportsContent(
 ): string {
 	const resolvedOptions = withDefaults(options);
 	const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
-	const { records, imports } = toImportRecords(sourceFile, content);
-
-	if (imports.length === 0) {
+	const importBlocks = getContiguousImportBlocks(sourceFile);
+	if (importBlocks.length === 0) {
 		return content;
 	}
 
-	const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
 	const eol = detectEol(content);
-	let prepared = prepareImports(baseRecords, resolvedOptions, eol);
-	prepared.sort((a, b) => comparePreparedImports(a, b, resolvedOptions));
-	prepared = applyAlignmentAndResort(prepared, resolvedOptions);
+	let nextContent = content;
 
-	const organizedImports = joinImports(prepared, eol, resolvedOptions.groupImports);
-	return rebuildContent(content, imports, organizedImports);
+	for (let index = importBlocks.length - 1; index >= 0; index--) {
+		const block = importBlocks[index];
+		const { records } = toImportRecords(sourceFile, content, block);
+		const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
+		let prepared = prepareImports(baseRecords, resolvedOptions, eol);
+		prepared.sort((a, b) => comparePreparedImports(a, b, resolvedOptions));
+		prepared = applyAlignmentAndResort(prepared, resolvedOptions);
+
+		const organizedImports = joinImports(prepared, eol, resolvedOptions.groupImports);
+		nextContent = rebuildImportBlock(nextContent, block, organizedImports);
+	}
+
+	return nextContent;
 }
 
 export function organizeImports(filePath: string, options?: Partial<OrganizerOptions>): void {
-	const content = readFileSync(filePath, 'utf8');
+	const content   = readFileSync(filePath, 'utf8');
 	const organized = organizeImportsContent(content, filePath, options);
 
 	if (organized !== content) {
