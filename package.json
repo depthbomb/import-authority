@@ -1,7 +1,7 @@
 {
 	"private": true,
 	"name": "import-authority",
-	"version": "0.2.3",
+	"version": "0.2.4",
 	"displayName": "Import Authority",
 	"description": "Opinionated JavaScript/TypeScript import organizer for VS Code",
 	"publisher": "CaprineLogic",

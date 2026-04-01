@@ -113,7 +113,25 @@ function splitNamedSpecifiers(namedImports: ts.NamedImports): { value: string[];
 
 function collectLeadingComments(content: string, statement: ts.ImportDeclaration): string[] {
 	const ranges = ts.getLeadingCommentRanges(content, statement.getFullStart()) ?? [];
-	return ranges.map(range => content.slice(range.pos, range.end).trimEnd());
+	if (ranges.length === 0) {
+		return [];
+	}
+
+	const contiguous: ts.CommentRange[] = [];
+	let nextStart = statement.getStart();
+
+	for (let index = ranges.length - 1; index >= 0; index--) {
+		const range = ranges[index];
+		const gap = content.slice(range.end, nextStart);
+		if (!/^\s*$/.test(gap) || /\r?\n[ \t]*\r?\n/.test(gap)) {
+			break;
+		}
+
+		contiguous.push(range);
+		nextStart = range.pos;
+	}
+
+	return contiguous.reverse().map(range => content.slice(range.pos, range.end).trimEnd());
 }
 
 function collectTrailingComment(content: string, statement: ts.ImportDeclaration): string | undefined {
@@ -487,7 +505,13 @@ function rebuildImportBlock(content: string, imports: ts.ImportDeclaration[], or
 
 	const beforeImports       = content.slice(0, firstImportStart);
 	const leadingTrivia       = content.slice(firstImportStart, firstImportTokenStart);
-	const preservedLeadingGap = /^[\s]*$/.test(leadingTrivia) ? leadingTrivia : '';
+	const firstImportHasAttachedComments = collectLeadingComments(content, firstImport).length > 0;
+	const preservedLeadingGap = /^[\s]*$/.test(leadingTrivia) || (
+		firstImportStart === 0 &&
+		!firstImportHasAttachedComments
+	)
+		? leadingTrivia
+		: '';
 	const afterImports        = content.slice(lastImportEnd).replace(/^(?:\s*\r?\n)+/, '');
 	const importBlock         = organizedImports.trim();
 

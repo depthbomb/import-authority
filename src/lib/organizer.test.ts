@@ -125,6 +125,34 @@ test('preserves leading comments attached to imports', () => {
 	assert.equal(output, expected);
 });
 
+test('preserves detached file header comments before first import block', () => {
+	const input = [
+		'/* generated: do not edit */',
+		'// @ts-nocheck',
+		'',
+		"import { B } from 'b';",
+		"import { A } from 'a';",
+		'',
+		'init();',
+		"import { C } from 'c';",
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts');
+	const expected = [
+		'/* generated: do not edit */',
+		'// @ts-nocheck',
+		'',
+		"import { A } from 'a';",
+		"import { B } from 'b';",
+		'',
+		'init();',
+		"import { C } from 'c';",
+		'',
+	].join('\n');
+
+	assert.equal(output, expected);
+});
+
 test('supports semicolon policy', () => {
 	const input = [
 		"import { A, Longer } from 'a';",
