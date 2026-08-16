@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { statSync, existsSync, readFileSync } from 'node:fs';
 import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
+import { createMinimalOffsetEdit } from './lib/text-edit';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,
@@ -44,6 +45,7 @@ const DOCUMENT_SELECTOR: vscode.DocumentSelector = [
 ];
 
 const aliasPrefixCache = new Map<string, AliasPrefixCacheEntry>();
+const configPathCache = new Map<string, string | null>();
 
 class PreviewContentProvider implements vscode.TextDocumentContentProvider {
 	private readonly onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
@@ -58,6 +60,10 @@ class PreviewContentProvider implements vscode.TextDocumentContentProvider {
 
 	public provideTextDocumentContent(uri: vscode.Uri): string {
 		return this.previews.get(uri.toString()) ?? '';
+	}
+
+	public delete(uri: vscode.Uri): void {
+		this.previews.delete(uri.toString());
 	}
 
 	public dispose(): void {
@@ -107,20 +113,29 @@ function dedupe(items: string[]): string[] {
 }
 
 function findNearestTsConfig(startPath: string): string | null {
-	let current = path.dirname(startPath);
+	const startDirectory = path.dirname(startPath);
+	const cached = configPathCache.get(startDirectory);
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	let current = startDirectory;
 	while (true) {
 		const tsconfig = path.join(current, 'tsconfig.json');
 		if (existsSync(tsconfig)) {
+			configPathCache.set(startDirectory, tsconfig);
 			return tsconfig;
 		}
 
 		const jsconfig = path.join(current, 'jsconfig.json');
 		if (existsSync(jsconfig)) {
+			configPathCache.set(startDirectory, jsconfig);
 			return jsconfig;
 		}
 
 		const parent = path.dirname(current);
 		if (parent === current) {
+			configPathCache.set(startDirectory, null);
 			return null;
 		}
 
@@ -245,12 +260,20 @@ function getOrganizeProviderEditsForDocument(
 	return edits;
 }
 
-async function removeUnusedImports(content: string, document: vscode.TextDocument, useScanFallback: boolean ): Promise<string> {
+async function removeUnusedImports(
+	content: string,
+	document: vscode.TextDocument,
+	useScanFallback: boolean,
+	expectedVersion: number,
+): Promise<string | undefined> {
 	try {
 		const organizeResult = await vscode.commands.executeCommand<vscode.WorkspaceEdit | vscode.TextEdit[]>(
 			'vscode.executeDocumentOrganizeImportsProvider',
 			document.uri,
 		);
+		if (document.version !== expectedVersion) {
+			return undefined;
+		}
 
 		let result = content;
 
@@ -267,6 +290,9 @@ async function removeUnusedImports(content: string, document: vscode.TextDocumen
 
 		return result;
 	} catch {
+		if (document.version !== expectedVersion) {
+			return undefined;
+		}
 		if (useScanFallback) {
 			return removeUnusedImportsByScan(content, getVirtualFilePath(document));
 		}
@@ -275,39 +301,66 @@ async function removeUnusedImports(content: string, document: vscode.TextDocumen
 	}
 }
 
-async function computeOrganizedContent(document: vscode.TextDocument): Promise<{ original: string; organized: string }> {
-	const options  = getOptions(document);
-	const original = document.getText();
-	const contentAfterUnusedRemoval = options.removeUnusedImportsFirst
-		? await removeUnusedImports(original, document, options.fallbackRemoveUnusedImportsByScan)
-		: original;
-	const organized = organizeImportsContent(
-		contentAfterUnusedRemoval,
-		getVirtualFilePath(document),
-		options.organizer,
-	);
-	return { original, organized };
+type OrganizedContent = { original: string; organized: string; version: number };
+
+async function computeOrganizedContent(document: vscode.TextDocument): Promise<OrganizedContent | undefined> {
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		const version  = document.version;
+		const options  = getOptions(document);
+		const original = document.getText();
+		const contentAfterUnusedRemoval = options.removeUnusedImportsFirst
+			? await removeUnusedImports(original, document, options.fallbackRemoveUnusedImportsByScan, version)
+			: original;
+
+		if (contentAfterUnusedRemoval === undefined || document.version !== version) {
+			continue;
+		}
+
+		const organized = organizeImportsContent(
+			contentAfterUnusedRemoval,
+			getVirtualFilePath(document),
+			options.organizer,
+		);
+		return { original, organized, version };
+	}
+
+	return undefined;
 }
 
-async function applyOrganizedContent(editor: vscode.TextEditor): Promise<void> {
-	if (!isSupportedDocument(editor.document)) {
+function createMinimalTextEdit(document: vscode.TextDocument, original: string, organized: string): vscode.TextEdit | undefined {
+	const edit = createMinimalOffsetEdit(original, organized);
+	if (!edit) {
+		return undefined;
+	}
+
+	const range = new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end));
+	return vscode.TextEdit.replace(range, edit.newText);
+}
+
+async function applyOrganizedContent(document: vscode.TextDocument): Promise<void> {
+	if (!isSupportedDocument(document)) {
 		void vscode.window.showWarningMessage('Only JavaScript and TypeScript files are supported.');
 		return;
 	}
 
-	const { original, organized } = await computeOrganizedContent(editor.document);
-	if (organized === original) {
+	const result = await computeOrganizedContent(document);
+	if (!result) {
+		void vscode.window.showWarningMessage('The document changed while imports were being organized. Please try again.');
 		return;
 	}
 
-	const fullRange = new vscode.Range(
-		editor.document.positionAt(0),
-		editor.document.positionAt(original.length),
-	);
+	const edit = createMinimalTextEdit(document, result.original, result.organized);
+	if (!edit) {
+		return;
+	}
+	if (document.version !== result.version) {
+		void vscode.window.showWarningMessage('The document changed while imports were being organized. Please try again.');
+		return;
+	}
 
-	const updated = await editor.edit(editBuilder => {
-		editBuilder.replace(fullRange, organized);
-	});
+	const workspaceEdit = new vscode.WorkspaceEdit();
+	workspaceEdit.set(document.uri, [edit]);
+	const updated = await vscode.workspace.applyEdit(workspaceEdit);
 
 	if (!updated) {
 		void vscode.window.showErrorMessage('Import Authority failed to apply edits.');
@@ -326,6 +379,7 @@ class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
 		action.command = {
 			command: COMMAND_ORGANIZE,
 			title: 'Organize Imports',
+			arguments: [document.uri],
 		};
 		return [action];
 	}
@@ -337,13 +391,13 @@ class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEdit
 			return [];
 		}
 
-		const { original, organized } = await computeOrganizedContent(document);
-		if (organized === original) {
+		const result = await computeOrganizedContent(document);
+		if (!result || document.version !== result.version) {
 			return [];
 		}
 
-		const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(original.length));
-		return [vscode.TextEdit.replace(fullRange, organized)];
+		const edit = createMinimalTextEdit(document, result.original, result.organized);
+		return edit ? [edit] : [];
 	}
 
 	public provideDocumentRangeFormattingEdits(document: vscode.TextDocument): Promise<vscode.TextEdit[]> {
@@ -354,22 +408,38 @@ class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEdit
 export function activate(context: vscode.ExtensionContext): void {
 	const previewProvider    = new PreviewContentProvider();
 	const formattingProvider = new ImportAuthorityFormattingProvider();
+	const configWatcher = vscode.workspace.createFileSystemWatcher('**/{tsconfig,jsconfig}.json');
+	const clearConfigCaches = (): void => {
+		aliasPrefixCache.clear();
+		configPathCache.clear();
+	};
 
 	context.subscriptions.push(
 		previewProvider,
+		configWatcher,
+		configWatcher.onDidCreate(clearConfigCaches),
+		configWatcher.onDidChange(clearConfigCaches),
+		configWatcher.onDidDelete(clearConfigCaches),
+		vscode.workspace.onDidCloseTextDocument(document => {
+			if (document.uri.scheme === PREVIEW_SCHEME) {
+				previewProvider.delete(document.uri);
+			}
+		}),
 		vscode.workspace.registerTextDocumentContentProvider(PREVIEW_SCHEME, previewProvider),
 		vscode.languages.registerCodeActionsProvider(DOCUMENT_SELECTOR, new ImportAuthorityCodeActionProvider(), {
 			providedCodeActionKinds: ImportAuthorityCodeActionProvider.providedCodeActionKinds,
 		}),
 		vscode.languages.registerDocumentFormattingEditProvider(DOCUMENT_SELECTOR, formattingProvider),
 		vscode.languages.registerDocumentRangeFormattingEditProvider(DOCUMENT_SELECTOR, formattingProvider),
-		vscode.commands.registerCommand(COMMAND_ORGANIZE, async () => {
-			const editor = vscode.window.activeTextEditor;
-			if (!editor) {
+		vscode.commands.registerCommand(COMMAND_ORGANIZE, async (targetUri?: vscode.Uri) => {
+			const document = targetUri
+				? await vscode.workspace.openTextDocument(targetUri)
+				: vscode.window.activeTextEditor?.document;
+			if (!document) {
 				return;
 			}
 
-			await applyOrganizedContent(editor);
+			await applyOrganizedContent(document);
 		}),
 		vscode.commands.registerCommand(COMMAND_PREVIEW, async () => {
 			const editor = vscode.window.activeTextEditor;
@@ -382,8 +452,12 @@ export function activate(context: vscode.ExtensionContext): void {
 				return;
 			}
 
-			const { original, organized } = await computeOrganizedContent(editor.document);
-			if (organized === original) {
+			const result = await computeOrganizedContent(editor.document);
+			if (!result || editor.document.version !== result.version) {
+				void vscode.window.showWarningMessage('The document changed while the preview was being prepared. Please try again.');
+				return;
+			}
+			if (result.organized === result.original) {
 				void vscode.window.showInformationMessage('Imports are already organized.');
 				return;
 			}
@@ -392,7 +466,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			const baseName = path.basename(editor.document.fileName || 'untitled');
 			const previewUri = vscode.Uri.parse(`${PREVIEW_SCHEME}:/${baseName}.${timestamp}`);
 
-			previewProvider.set(previewUri, organized);
+			previewProvider.set(previewUri, result.organized);
 
 			await vscode.commands.executeCommand(
 				'vscode.diff',
