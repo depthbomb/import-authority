@@ -45,6 +45,7 @@ export const DEFAULT_ORGANIZER_OPTIONS: OrganizerOptions = {
 type ImportRecord = {
 	moduleName: string;
 	quote: '"' | "'";
+	attributesText?: string;
 	isTypeOnly: boolean;
 	defaultImport?: string;
 	namespaceImport?: string;
@@ -99,7 +100,7 @@ function splitNamedSpecifiers(namedImports: ts.NamedImports): { value: string[];
 
 	for (const element of namedImports.elements) {
 		const importName = element.propertyName
-			? `${element.propertyName.text} as ${element.name.text}`
+			? `${element.propertyName.getText()} as ${element.name.text}`
 			: element.name.text;
 		if (element.isTypeOnly) {
 			type.push(importName);
@@ -162,11 +163,13 @@ function toImportRecords(
 		const clause = statement.importClause;
 		const leadingComments = collectLeadingComments(content, statement);
 		const trailingComment = collectTrailingComment(content, statement);
+		const attributesText = statement.attributes?.getText(sourceFile);
 
 		if (!clause) {
 			records.push({
 				moduleName,
 				quote,
+				attributesText,
 				isTypeOnly: false,
 				namedImports: [],
 				leadingComments,
@@ -196,6 +199,7 @@ function toImportRecords(
 			records.push({
 				moduleName,
 				quote,
+				attributesText,
 				isTypeOnly: true,
 				defaultImport,
 				namespaceImport,
@@ -212,6 +216,7 @@ function toImportRecords(
 			records.push({
 				moduleName,
 				quote,
+				attributesText,
 				isTypeOnly: false,
 				defaultImport,
 				namespaceImport,
@@ -227,6 +232,7 @@ function toImportRecords(
 			records.push({
 				moduleName,
 				quote,
+				attributesText,
 				isTypeOnly: true,
 				namedImports: typeNamedImports,
 				leadingComments: [],
@@ -345,6 +351,33 @@ function normalizeRelativeModuleName(moduleName: string): string {
 	return normalized;
 }
 
+function quoteModuleName(moduleName: string, quote: '"' | "'"): string {
+	let escaped = '';
+	for (const character of moduleName) {
+		switch (character) {
+			case '\\':
+				escaped += '\\\\';
+				break;
+			case '\n':
+				escaped += '\\n';
+				break;
+			case '\r':
+				escaped += '\\r';
+				break;
+			case '\u2028':
+				escaped += '\\u2028';
+				break;
+			case '\u2029':
+				escaped += '\\u2029';
+				break;
+			default:
+				escaped += character === quote ? `\\${character}` : character;
+		}
+	}
+
+	return `${quote}${escaped}${quote}`;
+}
+
 function formatImport(record: ImportRecord, options: OrganizerOptions, eol: string, includeTrailingComment = true): string {
 	const quote = options.quoteStyle === 'single'
 		? '\''
@@ -359,9 +392,11 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 	const moduleName = options.normalizeRelativePaths
 		? normalizeRelativeModuleName(record.moduleName)
 		: record.moduleName;
+	const moduleLiteral = quoteModuleName(moduleName, quote);
+	const attributesSuffix = record.attributesText ? ` ${record.attributesText}` : '';
 
 	if (record.isSideEffect) {
-		const base = `import ${quote}${moduleName}${quote}${suffix}`;
+		const base = `import ${moduleLiteral}${attributesSuffix}${suffix}`;
 		return includeTrailingComment && record.trailingComment ? `${base} ${record.trailingComment}` : base;
 	}
 
@@ -393,7 +428,7 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 
 		if (options.namedImportsWrapThreshold > 0 && namedItems.length > 1) {
 			const candidateParts = [...prefixParts, singleLineNamed];
-			const candidateImport = `import${typeKeyword} ${candidateParts.join(', ')} from ${quote}${moduleName}${quote}${suffix}`;
+			const candidateImport = `import${typeKeyword} ${candidateParts.join(', ')} from ${moduleLiteral}${attributesSuffix}${suffix}`;
 			if (candidateImport.length > options.namedImportsWrapThreshold) {
 				formattedNamed = `{${eol}\t${namedItems.join(`,${eol}\t`)}${eol}}`;
 			}
@@ -402,7 +437,7 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 		parts.push(formattedNamed);
 	}
 
-	const base = `import${typeKeyword} ${parts.join(', ')} from ${quote}${moduleName}${quote}${suffix}`;
+	const base = `import${typeKeyword} ${parts.join(', ')} from ${moduleLiteral}${attributesSuffix}${suffix}`;
 
 	return includeTrailingComment && record.trailingComment ? `${base} ${record.trailingComment}` : base;
 }
@@ -424,7 +459,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		return [...records];
 	}
 
-	const merged      = new Map<string, ImportRecord>();
+	const merged      = new Map<string, ImportRecord[]>();
 	const passthrough = [] as ImportRecord[];
 
 	for (const record of records) {
@@ -436,22 +471,36 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		const key = [
 			record.isTypeOnly ? 'type' : 'value',
 			record.moduleName,
-			record.defaultImport ?? '',
-			record.namespaceImport ?? '',
+			record.attributesText ?? '',
 			record.isSideEffect ? 'side-effect' : 'bound',
 		].join('|');
 
-		const existing = merged.get(key);
+		const candidates = merged.get(key) ?? [];
+		const existing = candidates.find(candidate => {
+			const defaultImportsAreCompatible = !candidate.defaultImport
+				|| !record.defaultImport
+				|| candidate.defaultImport === record.defaultImport;
+			const namespaceImportsAreCompatible = !candidate.namespaceImport
+				|| !record.namespaceImport
+				|| candidate.namespaceImport === record.namespaceImport;
+			const wouldMixNamespaceAndNamed = !!(candidate.namespaceImport || record.namespaceImport)
+				&& (candidate.namedImports.length > 0 || record.namedImports.length > 0);
+
+			return defaultImportsAreCompatible && namespaceImportsAreCompatible && !wouldMixNamespaceAndNamed;
+		});
 		if (!existing) {
-			merged.set(key, {
+			candidates.push({
 				...record,
 				namedImports: [...record.namedImports],
 				leadingComments: [...record.leadingComments],
 			});
+			merged.set(key, candidates);
 
 			continue;
 		}
 
+		existing.defaultImport ??= record.defaultImport;
+		existing.namespaceImport ??= record.namespaceImport;
 		existing.namedImports.push(...record.namedImports);
 		existing.hadSemicolon ||= record.hadSemicolon;
 		if (record.trailingComment) {
@@ -467,7 +516,8 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		}
 	}
 
-	for (const record of merged.values()) {
+	const mergedRecords = Array.from(merged.values()).flat();
+	for (const record of mergedRecords) {
 		if (record.namedImports.length > 1) {
 			record.namedImports = Array.from(new Set(record.namedImports));
 		}
@@ -477,7 +527,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		}
 	}
 
-	return [...merged.values(), ...passthrough];
+	return [...mergedRecords, ...passthrough];
 }
 
 function withDefaults(options?: Partial<OrganizerOptions>): OrganizerOptions {
@@ -732,13 +782,53 @@ function joinImports(prepared: PreparedImport[], eol: string, grouped: boolean):
 
 function collectUsedIdentifiers(sourceFile: ts.SourceFile): Set<string> {
 	const used = new Set<string>();
+	const isReference = (node: ts.Identifier): boolean => {
+		const parent = node.parent;
+		if (
+			(ts.isPropertyAccessExpression(parent) && parent.name === node)
+			|| (ts.isQualifiedName(parent) && parent.right === node)
+			|| (ts.isPropertyAssignment(parent) && parent.name === node)
+			|| (ts.isMethodDeclaration(parent) && parent.name === node)
+			|| (ts.isPropertyDeclaration(parent) && parent.name === node)
+			|| (ts.isPropertySignature(parent) && parent.name === node)
+			|| (ts.isMethodSignature(parent) && parent.name === node)
+			|| (ts.isGetAccessorDeclaration(parent) && parent.name === node)
+			|| (ts.isSetAccessorDeclaration(parent) && parent.name === node)
+			|| (ts.isEnumMember(parent) && parent.name === node)
+			|| (ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node))
+			|| (ts.isLabeledStatement(parent) && parent.label === node)
+			|| (ts.isBreakOrContinueStatement(parent) && parent.label === node)
+			|| (ts.isJsxAttribute(parent) && parent.name === node)
+		) {
+			return false;
+		}
+
+		if (
+			(ts.isVariableDeclaration(parent)
+				|| ts.isParameter(parent)
+				|| ts.isFunctionDeclaration(parent)
+				|| ts.isFunctionExpression(parent)
+				|| ts.isClassDeclaration(parent)
+				|| ts.isClassExpression(parent)
+				|| ts.isInterfaceDeclaration(parent)
+				|| ts.isTypeAliasDeclaration(parent)
+				|| ts.isEnumDeclaration(parent)
+				|| ts.isModuleDeclaration(parent)
+				|| ts.isTypeParameterDeclaration(parent))
+			&& parent.name === node
+		) {
+			return false;
+		}
+
+		return true;
+	};
 
 	const visit = (node: ts.Node): void => {
 		if (ts.isImportDeclaration(node)) {
 			return;
 		}
 
-		if (ts.isIdentifier(node)) {
+		if (ts.isIdentifier(node) && isReference(node)) {
 			used.add(node.text);
 		}
 
@@ -750,9 +840,9 @@ function collectUsedIdentifiers(sourceFile: ts.SourceFile): Set<string> {
 	return used;
 }
 
-function formatImportSpecifier(element: ts.ImportSpecifier): string {
+function formatImportSpecifier(element: ts.ImportSpecifier, sourceFile: ts.SourceFile): string {
 	const base = element.propertyName
-		? `${element.propertyName.text} as ${element.name.text}`
+		? `${element.propertyName.getText(sourceFile)} as ${element.name.text}`
 		: element.name.text;
 	return element.isTypeOnly ? `type ${base}` : base;
 }
@@ -789,13 +879,14 @@ function pruneUnusedFromImport(
 	}
 
 	if (keptNamedImports.length > 0) {
-		parts.push(`{ ${keptNamedImports.map(formatImportSpecifier).join(', ')} }`);
+		parts.push(`{ ${keptNamedImports.map(element => formatImportSpecifier(element, sourceFile)).join(', ')} }`);
 	}
 
 	const typeKeyword = clause.isTypeOnly ? ' type' : '';
 	const moduleLiteral = statement.moduleSpecifier.getText(sourceFile);
+	const attributesSuffix = statement.attributes ? ` ${statement.attributes.getText(sourceFile)}` : '';
 	const semicolonSuffix = statementText.trimEnd().endsWith(';') ? ';' : '';
-	return `import${typeKeyword} ${parts.join(', ')} from ${moduleLiteral}${semicolonSuffix}`;
+	return `import${typeKeyword} ${parts.join(', ')} from ${moduleLiteral}${attributesSuffix}${semicolonSuffix}`;
 }
 
 export function removeUnusedImportsByScan(content: string, filePath = 'file.ts'): string {

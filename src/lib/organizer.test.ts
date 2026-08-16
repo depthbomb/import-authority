@@ -587,3 +587,74 @@ test('preserves executable statements between separate import blocks', () => {
 	assert.match(output, /import '@extensions\/string';/);
 	assert.ok(output.indexOf("assertRuntime('bun');") < output.indexOf("import '@extensions/string';"));
 });
+
+test('preserves import attributes while organizing and merging', () => {
+	const input = [
+		"import { B } from './data.json' with { type: 'json' };",
+		"import { A } from './data.json' with { type: 'json' };",
+		'',
+		'console.log(A, B);',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.equal(output, [
+		"import { A, B } from './data.json' with { type: 'json' };",
+		'',
+		'console.log(A, B);',
+	].join('\n'));
+});
+
+test('preserves string-named import specifiers', () => {
+	const input = "import { 'a-b' as ab } from 'pkg';\n\nconsole.log(ab);";
+	assert.equal(organizeImportsContent(input, 'sample.ts'), input);
+});
+
+test('escapes module specifiers when enforcing quote style', () => {
+	const input = 'import { A } from "it\\\'s\\\\nested";\n\nconsole.log(A);';
+	const output = organizeImportsContent(input, 'sample.ts', { quoteStyle: 'single' });
+	assert.equal(output, "import { A } from 'it\\\'s\\\\nested';\n\nconsole.log(A);");
+});
+
+test('always policy combines compatible default and named imports', () => {
+	const input = [
+		"import D from 'm';",
+		"import { A } from 'm';",
+		'',
+		'console.log(D, A);',
+	].join('\n');
+
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.equal(output, "import D, { A } from 'm';\n\nconsole.log(D, A);");
+});
+
+test('scan fallback preserves import attributes and string-named specifiers', () => {
+	const input = [
+		"import data, { 'a-b' as ab, Unused } from './data.json' with { type: 'json' };",
+		'',
+		'console.log(data, ab);',
+	].join('\n');
+
+	const output = removeUnusedImportsByScan(input, 'sample.ts');
+	assert.equal(output, [
+		"import data, { 'a-b' as ab } from './data.json' with { type: 'json' };",
+		'',
+		'console.log(data, ab);',
+	].join('\n'));
+});
+
+test('scan fallback does not count property names as binding usage', () => {
+	const input = [
+		"import { Foo, Keep } from 'pkg';",
+		'',
+		'const value = { Foo: 1 };',
+		'console.log(value.Foo, Keep);',
+	].join('\n');
+
+	const output = removeUnusedImportsByScan(input, 'sample.ts');
+	assert.equal(output, [
+		"import { Keep } from 'pkg';",
+		'',
+		'const value = { Foo: 1 };',
+		'console.log(value.Foo, Keep);',
+	].join('\n'));
+});
