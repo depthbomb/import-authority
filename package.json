@@ -22,15 +22,15 @@
 		"test": "yarn run compile && tsx --test src/**/*.test.ts"
 	},
 	"devDependencies": {
-		"@types/node": "^22.19.17",
-		"@types/vscode": "^1.116.0",
-		"@typescript-eslint/eslint-plugin": "^8.58.2",
-		"@typescript-eslint/parser": "^8.58.2",
-		"esbuild": "^0.28.0",
-		"eslint": "^10.2.0",
+		"@types/node": "24.13.3",
+		"@types/vscode": "^1.125.0",
+		"@typescript-eslint/eslint-plugin": "^8.67.0",
+		"@typescript-eslint/parser": "^8.67.0",
+		"esbuild": "^0.28.2",
+		"eslint": "^10.8.1",
 		"npm-run-all": "^4.1.5",
-		"tsx": "^4.21.0",
-		"typescript": "^6.0.2"
+		"tsx": "^4.23.12",
+		"typescript": "^6.0.3"
 	},
 	"categories": [
 		"Other"
@@ -175,5 +175,5 @@
 			}
 		}
 	},
-	"packageManager": "yarn@4.13.0"
+	"packageManager": "yarn@4.18.0"
 }
