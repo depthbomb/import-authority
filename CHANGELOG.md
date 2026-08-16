@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-08-16
+
+### Changed
+
+- Reduced document updates to the smallest changed range
+- Cached TypeScript and JavaScript config discovery and invalidated the cache when config files change
+- Released preview content when its virtual document closes
+
+### Fixed
+
+- Preserved import attributes, string-named specifiers, and escaped module names while organizing
+- Combined compatible default and named imports under the `always` duplicate policy
+- Improved fallback unused-import detection for property and declaration names
+- Ensured source actions organize their requested document instead of whichever editor is active
+- Prevented asynchronous organization from overwriting document changes made while providers are running
+
 ## [0.2.4] - 2026-04-01
 
 ### Fixed
