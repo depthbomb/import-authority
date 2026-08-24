@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-24
+
+### Added
+
+- Added Vue single-file component support for inline JavaScript, JSX, TypeScript, and TSX
+  `<script>` and `<script setup>` blocks
+- Added continuous integration for immutable installs, tests, production builds, and extension
+  package validation
+
+### Changed
+
+- Preserved the relative evaluation order of bare and runtime-only imports
+- Left files with syntax errors unchanged to avoid destructive edits while typing
+- Resolved path aliases inherited through extended TypeScript and JavaScript configurations
+- Ran behavioral tests before publishing and strengthened lint failures
+
+### Fixed
+
+- Preserved empty value imports, inline-only type imports, deferred imports, import comments,
+  compiler directives, JSX pragmas, and JSDoc-only usages
+- Prevented fallback unused-import removal from deleting Vue bindings referenced by templates
+- Prevented range formatting from modifying content outside the requested selection
+- Constructed preview URIs safely for filenames containing URI-reserved characters
+- Aligned VS Code API types with the declared minimum engine so extension packaging succeeds
+
+### Security
+
+- Replaced obsolete watch tooling and refreshed vulnerable transitive development dependencies
+
 ## [0.2.5] - 2026-08-16
 
 ### Changed

@@ -1,6 +1,6 @@
 # Import Authority
 
-Opinionated import organizer for JavaScript and TypeScript in VS Code.
+Opinionated import organizer for JavaScript, TypeScript, and Vue in VS Code.
 
 **Get the extension [here](https://marketplace.visualstudio.com/items?itemName=CaprineLogic.import-authority)!**
 
@@ -20,6 +20,9 @@ When you run `Organize Imports`, the extension enforces these rules by default:
 - Mixed named imports like `{ A, type B }` are split into separate declarations.
 - Duplicate imports from the same module are merged per value/type bucket.
 - Import-adjacent leading comments are preserved and move with their import.
+- Bare side-effect imports retain their relative evaluation order.
+- Files with syntax errors are left unchanged to avoid destructive edits while typing.
+- Vue single-file components organize supported inline `<script>` and `<script setup>` blocks without touching templates or styles.
 
 ## Settings
 
@@ -49,6 +52,9 @@ The extension registers a `source.organizeImports` code action so it appears in 
 
 - `.ts`, `.tsx`, `.mts`, `.cts`
 - `.js`, `.jsx`, `.mjs`, `.cjs`
+- `.vue` with inline JavaScript, JSX, TypeScript, or TSX script blocks
+
+Vue scripts with `src` or an unsupported `lang` are left unchanged. Heuristic fallback unused-import removal is disabled for Vue because template references are not visible from the script AST; provider-based removal can still be supplied by the installed Vue language service.
 
 ## Development
 

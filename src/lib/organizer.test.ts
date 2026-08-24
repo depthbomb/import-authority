@@ -658,3 +658,179 @@ test('scan fallback does not count property names as binding usage', () => {
 		'console.log(value.Foo, Keep);',
 	].join('\n'));
 });
+
+test('leaves malformed source unchanged instead of guessing at incomplete imports', () => {
+	const input = "import { B } from 'b';\nimport { A } from ;\n\nrun(B);";
+	assert.equal(organizeImportsContent(input, 'sample.ts'), input);
+	assert.equal(removeUnusedImportsByScan(input, 'sample.ts'), input);
+});
+
+test('preserves comments inside import declarations without duplicating mixed imports', () => {
+	const input = [
+		"import { Z } from 'z';",
+		"import { V, /* explanation */ type T } from 'pkg';",
+		'',
+		'console.log(V);',
+	].join('\n');
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.equal(output.match(/explanation/g)?.length, 1);
+	assert.equal(output.match(/from 'pkg'/g)?.length, 1);
+	assert.match(output, /import \{ V, \/\* explanation \*\/ type T \} from 'pkg';/);
+});
+
+test('preserves empty value imports and deferred imports', () => {
+	const input = [
+		"import defer * as deferred from 'deferred';",
+		"import {} from './setup';",
+		"import { A } from 'a';",
+		'',
+		'console.log(A, deferred);',
+	].join('\n');
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.match(output, /import \{\} from '\.\/setup';/);
+	assert.match(output, /import defer \* as deferred from 'deferred';/);
+	assert.match(removeUnusedImportsByScan(input, 'sample.ts'), /import \{\} from '\.\/setup';/);
+});
+
+test('preserves inline-only type imports that retain runtime module evaluation', () => {
+	const input = "import { type Foo } from './setup';\n\nconst value: Foo = {};";
+	assert.equal(organizeImportsContent(input, 'sample.ts'), input);
+	assert.equal(removeUnusedImportsByScan("import { type Foo } from './setup';\n\nrun();", 'sample.ts'), "import { type Foo } from './setup';\n\nrun();");
+});
+
+test('preserves relative order among side-effect imports', () => {
+	const input = [
+		"import './longer-side-effect';",
+		"import {} from './empty-value-import';",
+		"import { type RuntimeType } from './inline-type-import';",
+		"import './a';",
+		"import { B } from 'b';",
+		'',
+		'console.log(B);',
+	].join('\n');
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.ok(output.indexOf("'./longer-side-effect'") < output.indexOf("'./a'"));
+	assert.ok(output.indexOf("'./longer-side-effect'") < output.indexOf("'./empty-value-import'"));
+	assert.ok(output.indexOf("'./empty-value-import'") < output.indexOf("'./inline-type-import'"));
+	assert.ok(output.indexOf("'./inline-type-import'") < output.indexOf("'./a'"));
+});
+
+test('keeps compiler and JSX directives ahead of organized imports', () => {
+	const input = [
+		'/// <reference types="node" />',
+		'/** @jsxImportSource preact */',
+		'// @ts-nocheck',
+		"import { LongName } from 'long';",
+		"import { A } from 'a';",
+		'',
+		'run(A, LongName);',
+	].join('\n');
+	const output = organizeImportsContent(input, 'sample.ts');
+	assert.ok(output.indexOf('/// <reference') < output.indexOf("import { A }"));
+	assert.ok(output.indexOf('@jsxImportSource') < output.indexOf("import { A }"));
+	assert.ok(output.indexOf('@ts-nocheck') < output.indexOf("import { A }"));
+});
+
+test('scan fallback preserves file directives when every import is removed', () => {
+	const input = [
+		'// @ts-nocheck',
+		"import { Unused } from 'pkg';",
+		'',
+		'undeclared();',
+	].join('\n');
+	assert.equal(removeUnusedImportsByScan(input, 'sample.ts'), '// @ts-nocheck\nundeclared();');
+});
+
+test('does not discard directive-like comments attached to later imports', () => {
+	const input = [
+		"import { A } from 'a';",
+		'/** @license dependency license */',
+		"import { LongName } from 'long';",
+		'',
+		'run(A, LongName);',
+	].join('\n');
+	assert.match(organizeImportsContent(input, 'sample.ts'), /@license dependency license/);
+});
+
+test('scan fallback treats JSDoc type names as uses and preserves commented imports', () => {
+	const input = [
+		'// rationale for keeping this import',
+		"import { Commented } from 'commented'; // trailing detail",
+		"import { Foo } from 'types';",
+		'',
+		'/** @type {Foo} */',
+		'let value;',
+	].join('\n');
+	const output = removeUnusedImportsByScan(input, 'sample.js');
+	assert.match(output, /import \{ Commented \} from 'commented'; \/\/ trailing detail/);
+	assert.match(output, /import \{ Foo \} from 'types';/);
+});
+
+test('organizes both Vue script blocks while preserving template and style content', () => {
+	const input = [
+		'<template>',
+		'  <button>{{ label }}</button>',
+		'</template>',
+		'',
+		'<script lang="ts">',
+		"import { Longer } from 'long';",
+		"import { A } from 'a';",
+		'export default { setup: () => ({ A, Longer }) };',
+		'</script>',
+		'',
+		'<script setup lang="tsx">',
+		"import Zed from 'zed-package';",
+		"import { B } from 'b';",
+		'console.log(B, Zed);',
+		'</script>',
+		'',
+		'<style>',
+		"@import './theme.css';",
+		"@import './base.css';",
+		'</style>',
+	].join('\n');
+	const output = organizeImportsContent(input, 'Component.vue');
+	assert.ok(output.indexOf("import { A } from 'a';") < output.indexOf("import { Longer } from 'long';"));
+	assert.ok(output.indexOf("import { B } from 'b';") < output.indexOf("import Zed from 'zed-package';"));
+	assert.match(output, /<template>\n  <button>\{\{ label \}\}<\/button>\n<\/template>/);
+	assert.match(output, /<style>\n@import '\.\/theme\.css';\n@import '\.\/base\.css';\n<\/style>/);
+});
+
+test('ignores nested, external, and unsupported Vue script blocks', () => {
+	const input = [
+		'<!-- <script>import bad from "comment"</script> -->',
+		'<template><template v-if="ok"><script>import bad from "template"</script></template></template>',
+		'<script src="./external.ts"></script>',
+		'<script lang="coffee">import bad from "coffee"</script>',
+	].join('\n');
+	assert.equal(organizeImportsContent(input, 'Component.vue'), input);
+	assert.equal(removeUnusedImportsByScan(input, 'Component.vue'), input);
+});
+
+test('supports case-insensitive Vue tags and quoted greater-than attributes', () => {
+	const input = [
+		'<SCRIPT data-example=">" setup LANG = TS>',
+		"import { Longer } from 'long';",
+		"import { A } from 'a';",
+		'console.log(A, Longer);',
+		'</SCRIPT>',
+	].join('\r\n');
+	const output = organizeImportsContent(input, 'Component.vue');
+	assert.ok(output.indexOf("import { A } from 'a';") < output.indexOf("import { Longer } from 'long';"));
+	assert.ok(output.includes('\r\n'));
+});
+
+test('leaves a malformed Vue SFC unchanged', () => {
+	const input = "<script setup lang='ts'>\nimport { B } from 'b';\nimport { A } from 'a';";
+	assert.equal(organizeImportsContent(input, 'Component.vue'), input);
+});
+
+test('never scan-prunes Vue bindings that may be consumed by the template', () => {
+	const input = [
+		'<script setup>',
+		"import MyButton from './MyButton.vue';",
+		'</script>',
+		'<template><MyButton /></template>',
+	].join('\n');
+	assert.equal(removeUnusedImportsByScan(input, 'Component.vue'), input);
+});

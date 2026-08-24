@@ -1,6 +1,7 @@
 out
 dist
 .yarn/cache
+.yarn/install-state.gz
 node_modules
 .vscode-test/
 *.vsix

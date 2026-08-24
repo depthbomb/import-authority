@@ -1,9 +1,9 @@
 {
 	"private": true,
 	"name": "import-authority",
-	"version": "0.2.5",
+	"version": "0.3.0",
 	"displayName": "Import Authority",
-	"description": "Opinionated JavaScript/TypeScript import organizer for VS Code",
+	"description": "Opinionated JavaScript, TypeScript, and Vue import organizer for VS Code",
 	"publisher": "CaprineLogic",
 	"repository": "https://github.com/depthbomb/import-authority",
 	"main": "./dist/extension.js",
@@ -11,9 +11,9 @@
 		"vscode": "^1.110.0"
 	},
 	"scripts": {
-		"vscode:prepublish": "yarn run package",
+		"vscode:prepublish": "yarn run test && yarn run package",
 		"compile": "yarn run check-types && yarn run lint && node esbuild.js",
-		"watch": "npm-run-all -p watch:*",
+		"watch": "run-p watch:esbuild watch:tsc",
 		"watch:esbuild": "node esbuild.js --watch",
 		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
 		"package": "yarn run check-types && yarn run lint && node esbuild.js --production",
@@ -23,12 +23,12 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
-		"@types/vscode": "^1.125.0",
-		"@typescript-eslint/eslint-plugin": "^8.67.0",
-		"@typescript-eslint/parser": "^8.67.0",
+		"@types/vscode": "1.110.0",
+		"@typescript-eslint/eslint-plugin": "^8.68.0",
+		"@typescript-eslint/parser": "^8.68.0",
 		"esbuild": "^0.28.2",
-		"eslint": "^10.8.1",
-		"npm-run-all": "^4.1.5",
+		"eslint": "^10.9.1",
+		"npm-run-all2": "^8.0.4",
 		"tsx": "^4.23.12",
 		"typescript": "^6.0.3"
 	},
@@ -39,7 +39,8 @@
 		"onLanguage:javascript",
 		"onLanguage:javascriptreact",
 		"onLanguage:typescript",
-		"onLanguage:typescriptreact"
+		"onLanguage:typescriptreact",
+		"onLanguage:vue"
 	],
 	"contributes": {
 		"commands": [

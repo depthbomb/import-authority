@@ -1,7 +1,7 @@
 import ts from 'typescript';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { statSync, existsSync, readFileSync } from 'node:fs';
+import { statSync, existsSync } from 'node:fs';
 import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
 import { createMinimalOffsetEdit } from './lib/text-edit';
 import type {
@@ -30,8 +30,8 @@ const COMMAND_PREVIEW  = 'import-authority.previewOrganizeImports';
 const PREVIEW_SCHEME   = 'import-authority-preview';
 const CONFIG_NAMESPACE = 'importAuthority';
 
-const SUPPORTED_LANGUAGE_IDS = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
-const SUPPORTED_EXTENSIONS   = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
+const SUPPORTED_LANGUAGE_IDS = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact', 'vue']);
+const SUPPORTED_EXTENSIONS   = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs', '.vue']);
 
 const DOCUMENT_SELECTOR: vscode.DocumentSelector = [
 	{ language: 'typescript',      scheme: 'file' },
@@ -42,6 +42,8 @@ const DOCUMENT_SELECTOR: vscode.DocumentSelector = [
 	{ language: 'typescriptreact', scheme: 'untitled' },
 	{ language: 'javascript',      scheme: 'untitled' },
 	{ language: 'javascriptreact', scheme: 'untitled' },
+	{ language: 'vue',             scheme: 'file' },
+	{ language: 'vue',             scheme: 'untitled' },
 ];
 
 const aliasPrefixCache = new Map<string, AliasPrefixCacheEntry>();
@@ -92,6 +94,8 @@ function getVirtualFilePath(document: vscode.TextDocument): string {
 	}
 
 	switch (document.languageId) {
+		case 'vue':
+			return 'untitled.vue';
 		case 'javascript':
 			return 'untitled.js';
 		case 'javascriptreact':
@@ -151,14 +155,17 @@ function readAliasPrefixesFromConfig(configPath: string): string[] {
 			return cached.prefixes;
 		}
 
-		const text = readFileSync(configPath, 'utf8');
-		const parsed = ts.parseConfigFileTextToJson(configPath, text);
-		if (parsed.error || !parsed.config) {
+		const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
+			...ts.sys,
+			readDirectory: () => [],
+			onUnRecoverableConfigFileDiagnostic: () => undefined,
+		});
+		if (!parsed) {
 			aliasPrefixCache.set(configPath, { mtimeMs, prefixes: [] });
 			return [];
 		}
 
-		const paths = (parsed.config.compilerOptions?.paths ?? {}) as Record<string, unknown>;
+		const paths = parsed.options.paths ?? {};
 		const prefixes = Object.keys(paths).map(normalizeAliasPrefix).filter(Boolean);
 		const deduped = dedupe(prefixes);
 		aliasPrefixCache.set(configPath, { mtimeMs, prefixes: deduped });
@@ -385,7 +392,7 @@ class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
 	}
 }
 
-class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEditProvider, vscode.DocumentRangeFormattingEditProvider {
+class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEditProvider {
 	public async provideDocumentFormattingEdits(document: vscode.TextDocument): Promise<vscode.TextEdit[]> {
 		if (!isSupportedDocument(document) || !isFormattingEnabled(document)) {
 			return [];
@@ -400,15 +407,12 @@ class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEdit
 		return edit ? [edit] : [];
 	}
 
-	public provideDocumentRangeFormattingEdits(document: vscode.TextDocument): Promise<vscode.TextEdit[]> {
-		return this.provideDocumentFormattingEdits(document);
-	}
 }
 
 export function activate(context: vscode.ExtensionContext): void {
 	const previewProvider    = new PreviewContentProvider();
 	const formattingProvider = new ImportAuthorityFormattingProvider();
-	const configWatcher = vscode.workspace.createFileSystemWatcher('**/{tsconfig,jsconfig}.json');
+	const configWatcher = vscode.workspace.createFileSystemWatcher('**/{tsconfig*.json,jsconfig*.json}');
 	const clearConfigCaches = (): void => {
 		aliasPrefixCache.clear();
 		configPathCache.clear();
@@ -430,7 +434,6 @@ export function activate(context: vscode.ExtensionContext): void {
 			providedCodeActionKinds: ImportAuthorityCodeActionProvider.providedCodeActionKinds,
 		}),
 		vscode.languages.registerDocumentFormattingEditProvider(DOCUMENT_SELECTOR, formattingProvider),
-		vscode.languages.registerDocumentRangeFormattingEditProvider(DOCUMENT_SELECTOR, formattingProvider),
 		vscode.commands.registerCommand(COMMAND_ORGANIZE, async (targetUri?: vscode.Uri) => {
 			const document = targetUri
 				? await vscode.workspace.openTextDocument(targetUri)
@@ -464,7 +467,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
 			const timestamp = Date.now().toString(36);
 			const baseName = path.basename(editor.document.fileName || 'untitled');
-			const previewUri = vscode.Uri.parse(`${PREVIEW_SCHEME}:/${baseName}.${timestamp}`);
+			const previewUri = vscode.Uri.from({
+				scheme: PREVIEW_SCHEME,
+				path: `/${baseName}.${timestamp}`,
+			});
 
 			previewProvider.set(previewUri, result.organized);
 
