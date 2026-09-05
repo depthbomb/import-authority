@@ -36,7 +36,7 @@ When you run `Organize Imports`, the extension enforces these rules by default:
 - `importAuthority.sorting.aliasPrefixes` (`[]`): extra alias prefixes for aliased-group classification.
 - `importAuthority.style.semicolonPolicy` (`always` | `never` | `preserve`): add semicolons, remove semicolons, or keep existing semicolon state.
 - `importAuthority.style.quoteStyle` (`single` | `double` | `preserve`): enforce quote style or keep the original quote style.
-- `importAuthority.style.typeImportStyle` (`declaration` | `inline`): type-only import declaration style.
+- `importAuthority.style.typeImportStyle` (`declaration` | `inline`): type-only import declaration style. Inline style retains mixed value/type bindings; standalone type declarations remain erased.
 - `importAuthority.style.namedImportsWrapThreshold` (`0`): wrap named imports to multiple lines when the unbroken line would exceed this length (`0` disables wrapping).
 - `importAuthority.style.alignFromKeyword` (`false`): add spacing so `from` aligns across single-line imports.
 - `importAuthority.style.normalizeRelativePaths` (`false`): normalize relative module paths and collapse trailing `/index`.

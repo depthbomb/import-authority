@@ -413,7 +413,7 @@ test('supports duplicate policy namedOnly', () => {
 	assert.equal(output, expected);
 });
 
-test('supports inline type import style', () => {
+test('inline style preserves the erasure of standalone type declarations', () => {
 	const input = [
 		"import type { Z, A } from 'types';",
 		'',
@@ -424,12 +424,25 @@ test('supports inline type import style', () => {
 		typeImportStyle: 'inline',
 	});
 	const expected = [
-		"import { type A, type Z } from 'types';",
+		"import type { A, Z } from 'types';",
 		'',
 		'void 0;',
 	].join('\n');
 
 	assert.equal(output, expected);
+});
+
+test('inline style keeps mixed bindings without adding runtime dependencies', () => {
+	const input = "import { value, type Foo } from './runtime';\nimport type { Bar } from './types';\nconsole.log(value);\n";
+	const options = { typeImportStyle: 'inline' as const };
+	const output = organizeImportsContent(input, 'file.ts', options);
+	assert.ok(output.includes("import { value, type Foo } from './runtime';"));
+	assert.ok(output.includes("import type { Bar } from './types';"));
+	const emit = (text: string): string => ts.transpileModule(text, {
+		compilerOptions: { module: ts.ModuleKind.ESNext, verbatimModuleSyntax: true },
+	}).outputText;
+	assert.equal(emit(output), emit(input));
+	assert.equal(organizeImportsContent(output, 'file.ts', options), output);
 });
 
 test('normalizes relative paths when enabled', () => {

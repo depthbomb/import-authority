@@ -174,6 +174,7 @@ function toImportRecords(
 	sourceFile: ts.SourceFile,
 	content: string,
 	imports = sourceFile.statements.filter(ts.isImportDeclaration),
+	inlineTypes = false,
 ): { records: ImportRecord[]; imports: ts.ImportDeclaration[] } {
 	const records: ImportRecord[] = [];
 
@@ -256,6 +257,11 @@ function toImportRecords(
 				rawText: rawText ?? statement.getText(sourceFile),
 			});
 			continue;
+		}
+
+		if (inlineTypes && !clause.isTypeOnly) {
+			valueNamedImports.push(...typeNamedImports.map(name => `type ${name}`));
+			typeNamedImports = [];
 		}
 
 		if (clause.isTypeOnly) {
@@ -497,17 +503,11 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 	}
 
 	const parts = [...prefixParts] as string[];
-	const shouldUseInlineTypeNamedImports = record.isTypeOnly
-		&& options.typeImportStyle === 'inline'
-		&& !record.defaultImport
-		&& !record.namespaceImport;
-	const typeKeyword = record.isTypeOnly && !shouldUseInlineTypeNamedImports ? ' type' : '';
+	const typeKeyword = record.isTypeOnly ? ' type' : '';
 
 	if (record.namedImports.length > 0 || record.hasNamedImportsClause) {
 		const named = normalizeNamedImports(record.namedImports);
-		const namedItems = shouldUseInlineTypeNamedImports
-			? named.map(item => `type ${item}`)
-			: named;
+		const namedItems = named;
 		const singleLineNamed = namedItems.length > 0 ? `{ ${namedItems.join(', ')} }` : '{}';
 
 		let formattedNamed = singleLineNamed;
@@ -1307,7 +1307,7 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 
 	for (let index = importBlocks.length - 1; index >= 0; index--) {
 		const block = importBlocks[index];
-		const { records } = toImportRecords(sourceFile, content, block);
+		const { records } = toImportRecords(sourceFile, content, block, resolvedOptions.typeImportStyle === 'inline');
 		const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
 		let prepared = prepareImports(baseRecords, resolvedOptions, eol);
 		prepared.sort((a, b) => comparePreparedImports(a, b, resolvedOptions));

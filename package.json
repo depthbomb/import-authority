@@ -138,7 +138,7 @@
 						"inline"
 					],
 					"default": "declaration",
-					"description": "Use import type declarations or inline type specifiers for type-only named imports."
+					"description": "Use declarations or inline specifiers for mixed value/type imports. Standalone type declarations remain erased."
 				},
 				"importAuthority.style.namedImportsWrapThreshold": {
 					"type": "number",
