@@ -3,6 +3,7 @@ import path from 'node:path';
 import { builtinModules } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { convertTypeOnlyImports } from './type-imports';
+import type { OffsetEdit } from './text-edit';
 
 export type SemicolonPolicy       = 'always' | 'never' | 'preserve';
 export type QuoteStyle            = 'single' | 'double' | 'preserve';
@@ -1439,6 +1440,75 @@ export type OrganizationReport = {
 	reasons: OrganizationReason[];
 };
 
+export type ImportFix = {
+	code: 'type-import' | 'duplicate-import' | 'organize-imports';
+	start: number;
+	end: number;
+	title: string;
+	message: string;
+	edits: OffsetEdit[];
+};
+
+/** Local, read-only analysis; deliberately never invokes external removal providers. */
+export function getImportFixes(content: string, filePath = 'file.ts', options?: Partial<OrganizerOptions>): ImportFix[] {
+	const resolvedOptions = withDefaults(options);
+	if (path.extname(filePath).toLowerCase() === '.vue') {
+		const blocks = findVueScriptBlocks(content, filePath);
+		if (!blocks || blocks.some(block => getImportProtection(ts.createSourceFile(
+			block.filePath, content.slice(block.contentStart, block.contentEnd), ts.ScriptTarget.Latest, true, getScriptKind(block.filePath),
+		)).fileIgnored)) { return []; }
+		return blocks.flatMap(block => getImportFixes(content.slice(block.contentStart, block.contentEnd), block.filePath,
+			{ ...options, convertTypeOnlyImports: false }).map(fix => ({
+			...fix, start: fix.start + block.contentStart, end: fix.end + block.contentStart,
+			edits: fix.edits.map(edit => ({ ...edit, start: edit.start + block.contentStart, end: edit.end + block.contentStart })),
+		})));
+	}
+	const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	const protection = getImportProtection(source);
+	if (protection.fileIgnored || hasParseDiagnostics(source)) { return []; }
+	const blocks = getContiguousImportBlocks(source, protection);
+	const fixes: ImportFix[] = [];
+	if (resolvedOptions.convertTypeOnlyImports) {
+		const conversion = convertTypeOnlyImports(source, blocks.flat(), resolvedOptions, resolvedOptions.typeImportStyle === 'inline');
+		for (const edit of conversion.edits) {
+			fixes.push({
+				code: 'type-import', start: edit.start, end: edit.end,
+				title: 'Convert type-only bindings in this import',
+				message: 'This import has bindings used only as types.', edits: [edit],
+			});
+		}
+	}
+	const eol = detectEol(content);
+	for (const block of blocks) {
+		const { prepared, merged } = prepareImportBlock(source, content, block, resolvedOptions, eol);
+		const edit = createImportBlockEdit(content, block, joinImports(prepared, eol, resolvedOptions.groupImports), eol);
+		if (content.slice(edit.start, edit.end) === edit.text) { continue; }
+		fixes.push({
+			code: merged > 0 ? 'duplicate-import' : 'organize-imports',
+			start: block[0].getStart(source), end: block[block.length - 1].getEnd(),
+			title: merged > 0 ? 'Merge duplicates and organize this import block' : 'Organize this import block',
+			message: merged > 0 ? 'This import block contains mergeable duplicate imports.' : 'This import block does not match your organization settings.',
+			edits: [{ start: edit.start, end: edit.end, newText: edit.text }],
+		});
+	}
+	return fixes;
+}
+
+function prepareImportBlock(source: ts.SourceFile, content: string, block: ts.ImportDeclaration[], options: OrganizerOptions, eol: string, report?: OrganizationReport) {
+	const { records } = toImportRecords(source, content, block, options.typeImportStyle === 'inline');
+	const baseRecords = mergeRecords(records, options.duplicateImportPolicy);
+	let prepared = prepareImports(baseRecords, options, eol);
+	const originalOrder = report ? [...prepared].sort((a, b) => a.sourceOrder - b.sourceOrder).map(entry => entry.sourceOrder) : [];
+	prepared.sort((a, b) => comparePreparedImports(a, b, options));
+	prepared = applyAlignmentAndResort(prepared, options);
+	const merged = records.length - baseRecords.length;
+	if (report) {
+		report.merged += merged;
+		report.moved += prepared.filter((entry, index) => entry.sourceOrder !== originalOrder[index]).length;
+	}
+	return { prepared, merged };
+}
+
 function organizeScriptContent(content: string, filePath: string, options?: Partial<OrganizerOptions>, report?: OrganizationReport, scope = ''): string {
 	const resolvedOptions = withDefaults(options);
 	let sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
@@ -1493,16 +1563,7 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 	const edits: ImportBlockEdit[] = [];
 
 	for (const block of importBlocks) {
-		const { records } = toImportRecords(sourceFile, content, block, resolvedOptions.typeImportStyle === 'inline');
-		const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
-		let prepared = prepareImports(baseRecords, resolvedOptions, eol);
-		const originalOrder = report ? [...prepared].sort((a, b) => a.sourceOrder - b.sourceOrder).map(entry => entry.sourceOrder) : [];
-		prepared.sort((a, b) => comparePreparedImports(a, b, resolvedOptions));
-		prepared = applyAlignmentAndResort(prepared, resolvedOptions);
-		if (report) {
-			report.merged += records.length - baseRecords.length;
-			report.moved += prepared.filter((entry, index) => entry.sourceOrder !== originalOrder[index]).length;
-		}
+		const { prepared } = prepareImportBlock(sourceFile, content, block, resolvedOptions, eol, report);
 
 		const organizedImports = joinImports(prepared, eol, resolvedOptions.groupImports);
 		edits.push(createImportBlockEdit(content, block, organizedImports, eol));

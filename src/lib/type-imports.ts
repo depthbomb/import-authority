@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import type { OffsetEdit } from './text-edit';
 
 type Usage = { type: boolean; value: boolean };
 
@@ -17,8 +18,8 @@ export function convertTypeOnlyImports(
 	imports: ts.ImportDeclaration[],
 	compilerOptions: ts.CompilerOptions = {},
 	inlineTypes = false,
-): { content: string; converted: number; note?: string } {
-	const unchanged = { content: source.text, converted: 0 };
+): { content: string; converted: number; edits: OffsetEdit[]; note?: string } {
+	const unchanged = { content: source.text, converted: 0, edits: [] };
 	if (!/\.(?:ts|tsx|mts|cts)$/i.test(source.fileName) || imports.length === 0) { return unchanged; }
 	let hasDecorators = false;
 	let hasJsx = false;
@@ -128,5 +129,5 @@ export function convertTypeOnlyImports(
 	const chunks: string[] = [];
 	for (const edit of edits) { chunks.push(source.text.slice(cursor, edit.start), edit.text); cursor = edit.end; }
 	chunks.push(source.text.slice(cursor));
-	return { content: chunks.join(''), converted };
+	return { content: chunks.join(''), converted, edits: edits.map(edit => ({ start: edit.start, end: edit.end, newText: edit.text })) };
 }

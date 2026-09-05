@@ -46,6 +46,7 @@ When directives are present, language-service unused-import removal is skipped b
 
 ## Settings
 
+- `importAuthority.features.enableDiagnostics` (`true`): show live diagnostics and quick fixes for import organization in open files.
 - `importAuthority.typeImports.convertTypeOnlyImports` (`true`): convert TypeScript import bindings used exclusively as types before organization.
 - `importAuthority.sorting.placeTypeImportsLast` (`true`): place type imports after non-type imports.
 - `importAuthority.sorting.placeDefaultAndNamespaceImportsLast` (`true`): place default/namespace imports after plain named imports.
@@ -64,6 +65,12 @@ When directives are present, language-service unused-import removal is skipped b
 - `importAuthority.unusedImports.useBuiltInRemoval` (`false`): remove unused imports first using the language service, then apply organizer ordering.
 - `importAuthority.unusedImports.useFallbackRemoval` (`false`): if provider-based unused-import removal fails or has no effect, run a heuristic scan fallback.
 - `importAuthority.features.enableFormattingProvider` (`false`): enable document/range formatting support.
+
+## Live diagnostics and quick fixes
+
+Import Authority checks open files after a 300 ms pause in typing. Informational diagnostics identify type-only bindings, mergeable duplicate imports, and import blocks that differ from your settings. Use the lightbulb to convert a declaration's type-only bindings or organize the affected block, including merging its duplicates. Other blocks and executable code remain untouched.
+
+Diagnostics respect ignore directives and syntax errors, and support inline Vue script blocks. They use local analysis without requesting unused-import removal from another extension. Editing a document or changing settings invalidates its previous fixes. Disable `features.enableDiagnostics` to turn off these diagnostics and quick fixes.
 
 ## Automatic type imports
 

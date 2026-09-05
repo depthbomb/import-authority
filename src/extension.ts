@@ -5,13 +5,14 @@ import { statSync, existsSync } from 'node:fs';
 import { createMinimalOffsetEdit } from './lib/text-edit';
 import { requestUnusedImportResult } from './lib/unused-provider';
 import { describeOrganization, describeOrganizationCounts } from './lib/organization-report';
-import { organizeImportsWithReport, removeUnusedImportsByScan } from './lib/organizer';
+import { getImportFixes, organizeImportsWithReport, removeUnusedImportsByScan } from './lib/organizer';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,
 	TypeImportStyle,
 	OrganizerOptions,
 	OrganizationReport,
+	ImportFix,
 	SideEffectPlacement,
 	ModuleSpecifierOrder,
 	DuplicateImportPolicy
@@ -32,6 +33,7 @@ type ExtensionOptions = {
 const COMMAND_ORGANIZE = 'import-authority.organizeImports';
 const COMMAND_PREVIEW  = 'import-authority.previewOrganizeImports';
 const COMMAND_EXPLAIN  = 'import-authority.explainImports';
+const COMMAND_APPLY_FIX = 'import-authority.applyImportFix';
 const PREVIEW_SCHEME   = 'import-authority-preview';
 const CONFIG_NAMESPACE = 'importAuthority';
 
@@ -396,22 +398,115 @@ async function applyOrganizedContent(document: vscode.TextDocument, output: vsco
 	}
 }
 
+class LiveImportDiagnostics implements vscode.Disposable {
+	private readonly diagnostics = vscode.languages.createDiagnosticCollection('import-authority');
+	private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly snapshots = new Map<string, { version: number; generation: number; fixes: ImportFix[] }>();
+	private generation = 0;
+	private readonly subscriptions: vscode.Disposable[];
+	constructor() {
+		this.subscriptions = [
+			vscode.workspace.onDidOpenTextDocument(document => this.schedule(document)),
+			vscode.workspace.onDidChangeTextDocument(event => this.schedule(event.document)),
+			vscode.workspace.onDidCloseTextDocument(document => this.clear(document.uri)),
+			vscode.workspace.onDidChangeConfiguration(event => {
+				if (event.affectsConfiguration(CONFIG_NAMESPACE)) { this.invalidateAll(); }
+			}),
+			vscode.commands.registerCommand(COMMAND_APPLY_FIX, async (uri: vscode.Uri, version: number, index: number, generation: number) => {
+				const document = await vscode.workspace.openTextDocument(uri);
+				const snapshot = this.snapshots.get(uri.toString());
+				const fix = snapshot?.fixes[index];
+				if (document.version !== version || snapshot?.version !== version || snapshot.generation !== generation || !fix) {
+					void vscode.window.showInformationMessage('Imports changed. Request the quick fix again.');
+					return;
+				}
+				const edit = new vscode.WorkspaceEdit();
+				edit.set(uri, fix.edits.map(change => vscode.TextEdit.replace(
+					new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.newText,
+				)));
+				if (!await vscode.workspace.applyEdit(edit)) { void vscode.window.showErrorMessage('Import Authority failed to apply the quick fix.'); }
+			}),
+		];
+		this.invalidateAll();
+	}
+	private clear(uri: vscode.Uri): void {
+		const key = uri.toString();
+		clearTimeout(this.pending.get(key));
+		this.pending.delete(key);
+		this.snapshots.delete(key);
+		this.diagnostics.delete(uri);
+	}
+	private enabled(document: vscode.TextDocument): boolean {
+		return isSupportedDocument(document) && !document.isClosed
+			&& vscode.workspace.getConfiguration(CONFIG_NAMESPACE, document).get<boolean>('features.enableDiagnostics', true);
+	}
+	private schedule(document: vscode.TextDocument): void {
+		this.clear(document.uri);
+		if (!this.enabled(document)) { return; }
+		const key = document.uri.toString();
+		this.pending.set(key, setTimeout(() => {
+			this.pending.delete(key);
+			this.refresh(document);
+		}, 300));
+	}
+	public invalidateAll(): void {
+		for (const document of vscode.workspace.textDocuments) { this.schedule(document); }
+	}
+	private refresh(document: vscode.TextDocument): ImportFix[] {
+		if (!this.enabled(document)) { this.clear(document.uri); return []; }
+		const key = document.uri.toString();
+		const cached = this.snapshots.get(key);
+		if (cached?.version === document.version) { return cached.fixes; }
+		const version = document.version;
+		const fixes = getImportFixes(document.getText(), getVirtualFilePath(document), getOptions(document).organizer);
+		if (document.version !== version || document.isClosed) { return []; }
+		this.snapshots.set(key, { version, generation: ++this.generation, fixes });
+		this.diagnostics.set(document.uri, fixes.map(fix => {
+			const diagnostic = new vscode.Diagnostic(new vscode.Range(document.positionAt(fix.start), document.positionAt(fix.end)), fix.message, vscode.DiagnosticSeverity.Information);
+			diagnostic.source = 'Import Authority';
+			diagnostic.code = fix.code;
+			return diagnostic;
+		}));
+		return fixes;
+	}
+	public actions(document: vscode.TextDocument, range: vscode.Range): vscode.CodeAction[] {
+		if (range.start === undefined || range.end === undefined) { return []; }
+		const start = document.offsetAt(range.start);
+		const end = document.offsetAt(range.end);
+		return this.refresh(document).flatMap((fix, index) => {
+			if (fix.end < start || fix.start > end) { return []; }
+			const action = new vscode.CodeAction(fix.title, vscode.CodeActionKind.QuickFix);
+			action.diagnostics = this.diagnostics.get(document.uri)?.filter(diagnostic => diagnostic.code === fix.code && document.offsetAt(diagnostic.range.start) === fix.start);
+			action.command = { command: COMMAND_APPLY_FIX, title: fix.title, arguments: [document.uri, document.version, index, this.snapshots.get(document.uri.toString())!.generation] };
+			return [action];
+		});
+	}
+	public dispose(): void {
+		for (const timer of this.pending.values()) { clearTimeout(timer); }
+		this.pending.clear(); this.snapshots.clear(); this.diagnostics.dispose();
+		for (const subscription of this.subscriptions) { subscription.dispose(); }
+	}
+}
+
 class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
 	public static readonly kind = vscode.CodeActionKind.SourceOrganizeImports.append('importAuthority');
-	public static readonly providedCodeActionKinds = [ImportAuthorityCodeActionProvider.kind];
+	public static readonly providedCodeActionKinds = [ImportAuthorityCodeActionProvider.kind, vscode.CodeActionKind.QuickFix];
+	constructor(private readonly live: LiveImportDiagnostics) {}
 
 	public provideCodeActions(document: vscode.TextDocument, _range: vscode.Range, context: vscode.CodeActionContext): vscode.CodeAction[] {
-		if (!isSupportedDocument(document) || (context.only && !context.only.contains(ImportAuthorityCodeActionProvider.kind))) {
+		if (!isSupportedDocument(document)) {
 			return [];
 		}
 
+		const fixes = !context.only || context.only.contains(vscode.CodeActionKind.QuickFix) ? this.live.actions(document, _range) : [];
+		if (context.only && !context.only.contains(ImportAuthorityCodeActionProvider.kind)) { return fixes; }
 		const action = new vscode.CodeAction('Organize Imports (Import Authority)', ImportAuthorityCodeActionProvider.kind);
 		action.command = {
 			command: COMMAND_ORGANIZE,
 			title: 'Organize Imports',
 			arguments: [document.uri],
 		};
-		return [action];
+		return [action, ...fixes];
 	}
 }
 
@@ -438,13 +533,16 @@ export function activate(context: vscode.ExtensionContext): void {
 	const previewProvider    = new PreviewContentProvider();
 	const output = vscode.window.createOutputChannel('Import Authority');
 	const formattingProvider = new ImportAuthorityFormattingProvider(output);
+	const live = new LiveImportDiagnostics();
 	const configWatcher = vscode.workspace.createFileSystemWatcher('**/{tsconfig*.json,jsconfig*.json}');
 	const clearConfigCaches = (): void => {
 		aliasPrefixCache.clear();
 		configPathCache.clear();
+		live.invalidateAll();
 	};
 
 	context.subscriptions.push(
+		live,
 		output,
 		previewProvider,
 		configWatcher,
@@ -457,7 +555,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 		}),
 		vscode.workspace.registerTextDocumentContentProvider(PREVIEW_SCHEME, previewProvider),
-		vscode.languages.registerCodeActionsProvider(DOCUMENT_SELECTOR, new ImportAuthorityCodeActionProvider(), {
+		vscode.languages.registerCodeActionsProvider(DOCUMENT_SELECTOR, new ImportAuthorityCodeActionProvider(live), {
 			providedCodeActionKinds: ImportAuthorityCodeActionProvider.providedCodeActionKinds,
 		}),
 		vscode.languages.registerDocumentFormattingEditProvider(DOCUMENT_SELECTOR, formattingProvider),

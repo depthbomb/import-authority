@@ -20,6 +20,13 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 	const providerCalls: unknown[][] = [];
 	const messages: string[] = [];
 	const logs: string[] = [];
+	const diagnostics = new Map<string, vscode.Diagnostic[]>();
+	const events = new Map<string, (event: any) => void>();
+	const on = (name: string) => (handler: (event: any) => void) => {
+		const previous = events.get(name);
+		events.set(name, event => { previous?.(event); handler(event); }); return disposable;
+	};
+	const documents: vscode.TextDocument[] = [];
 	let outputShown = false;
 	let previewProvider: vscode.TextDocumentContentProvider;
 	let formattingProvider: vscode.DocumentFormattingEditProvider;
@@ -31,7 +38,9 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 	};
 	const api = {
 		Uri: { from: (parts: { scheme: string; path: string }) => ({ ...parts, toString: () => `${parts.scheme}:${parts.path}` }) },
-		CodeActionKind: { SourceOrganizeImports: new Kind('source.organizeImports') },
+		CodeActionKind: { SourceOrganizeImports: new Kind('source.organizeImports'), QuickFix: new Kind('quickfix') },
+		DiagnosticSeverity: { Information: 2 },
+		Diagnostic: class { constructor(public range: unknown, public message: string, public severity: number) {} },
 		CodeAction: class { constructor(public title: string, public kind: Kind) {} },
 		EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
 		Range: class { constructor(public start: number, public end: number) {} },
@@ -45,14 +54,21 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 			showInformationMessage: (message: string) => { messages.push(message); },
 		},
 		workspace: {
+			textDocuments: documents,
+			onDidOpenTextDocument: on('open'), onDidChangeTextDocument: on('change'), onDidChangeConfiguration: on('config'),
 			getConfiguration: () => ({ get: (key: string, fallback: unknown) => settings[key] ?? (key === 'sorting.detectPathAliases' ? false : fallback) }),
 			openTextDocument: async () => document,
 			applyEdit: async (edit: typeof applied[number]) => { applied.push(edit); return true; },
 			createFileSystemWatcher: () => ({ ...disposable, onDidCreate: () => disposable, onDidChange: () => disposable, onDidDelete: () => disposable }),
-			onDidCloseTextDocument: () => disposable,
+			onDidCloseTextDocument: on('close'),
 			registerTextDocumentContentProvider: (_scheme: string, registered: vscode.TextDocumentContentProvider) => { previewProvider = registered; return disposable; },
 		},
 		languages: {
+			createDiagnosticCollection: () => ({
+				set: (uri: vscode.Uri, values: vscode.Diagnostic[]) => diagnostics.set(uri.toString(), values),
+				get: (uri: vscode.Uri) => diagnostics.get(uri.toString()),
+				delete: (uri: vscode.Uri) => diagnostics.delete(uri.toString()), dispose: () => diagnostics.clear(),
+			}),
 			registerCodeActionsProvider: (_selector: unknown, registered: vscode.CodeActionProvider, meta: vscode.CodeActionProviderMetadata) => {
 				provider = registered; metadata = meta; return disposable;
 			},
@@ -72,16 +88,18 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 	runInThisContext(`(function(require, module, exports) {${compiled}\n})`, { filename })(
 		(name: string) => name === 'vscode' ? api : localRequire(name), extension, extension.exports,
 	);
-	extension.exports.activate({ subscriptions: [] });
+	const subscriptions: vscode.Disposable[] = [];
+	extension.exports.activate({ subscriptions });
 	return {
 		provider: provider!, metadata: metadata!, commands, providerCalls, messages, applied, document,
 		logs, outputShown: () => outputShown, previewProvider: previewProvider!, formattingProvider: formattingProvider!,
+		diagnostics, events, documents, dispose: () => subscriptions.forEach(subscription => subscription.dispose()),
 	};
 }
 
 test('registers a dedicated save action that also responds to generic organize requests', () => {
 	const { provider, metadata, commands } = activateTestExtension();
-	assert.deepEqual(metadata.providedCodeActionKinds?.map(kind => kind.value), ['source.organizeImports.importAuthority']);
+	assert.deepEqual(metadata.providedCodeActionKinds?.map(kind => kind.value), ['source.organizeImports.importAuthority', 'quickfix']);
 	const document = { uri: { scheme: 'file', fsPath: '/test.ts' }, languageId: 'typescript' } as vscode.TextDocument;
 	for (const filter of [undefined, 'source', 'source.organizeImports', 'source.organizeImports.importAuthority']) {
 		const actions = provider.provideCodeActions!(document, {} as vscode.Range, {
@@ -229,4 +247,54 @@ test('type-import conversion is enabled by default, configurable and read-only i
 	assert.match(String(diff[3]), /1 converted to type imports/);
 	assert.match(String(preview.previewProvider.provideTextDocumentContent(diff[2] as vscode.Uri, {} as vscode.CancellationToken)), /import type \{ Model \}/);
 	assert.equal(preview.applied.length, 0);
+});
+
+test('live diagnostics debounce changes, offer targeted fixes, and clear on close or disable', async () => {
+	const settings: Record<string, unknown> = {};
+	const extension = activateTestExtension("import { Z, A } from 'pkg';\n", settings);
+	const doc = extension.document as unknown as vscode.TextDocument;
+	extension.documents.push(doc);
+	try {
+		extension.events.get('open')!(doc);
+		assert.equal(extension.diagnostics.size, 0);
+		await new Promise(resolve => setTimeout(resolve, 350));
+		assert.equal(extension.diagnostics.get(doc.uri.toString())?.[0].code, 'organize-imports');
+		const actions = extension.provider.provideCodeActions!(doc, { start: 0, end: 30 } as unknown as vscode.Range,
+			{ only: new Kind('quickfix'), diagnostics: [] } as unknown as vscode.CodeActionContext, {} as vscode.CancellationToken) as vscode.CodeAction[];
+		assert.equal(actions.length, 1);
+		assert.equal(actions[0].kind?.value, 'quickfix');
+		await extension.commands.get(actions[0].command!.command)!(...actions[0].command!.arguments!);
+		assert.equal(extension.applied.length, 1);
+		assert.equal(extension.providerCalls.length, 0);
+		extension.document.version += 1;
+		extension.events.get('change')!({ document: doc });
+		assert.equal(extension.diagnostics.size, 0);
+		await extension.commands.get(actions[0].command!.command)!(...actions[0].command!.arguments!);
+		assert.equal(extension.applied.length, 1);
+		settings['features.enableDiagnostics'] = false;
+		extension.events.get('config')!({ affectsConfiguration: () => true });
+		await new Promise(resolve => setTimeout(resolve, 350));
+		assert.equal(extension.diagnostics.size, 0);
+		settings['features.enableDiagnostics'] = true;
+		extension.events.get('config')!({ affectsConfiguration: () => true });
+		extension.events.get('close')!(doc);
+		await new Promise(resolve => setTimeout(resolve, 350));
+		assert.equal(extension.diagnostics.size, 0);
+	} finally { extension.dispose(); }
+});
+
+test('quick fixes reject an older configuration snapshot even when the document version matches', async () => {
+	const extension = activateTestExtension("import { Z, A } from 'pkg';\n");
+	const doc = extension.document as unknown as vscode.TextDocument;
+	extension.documents.push(doc);
+	const actions = () => extension.provider.provideCodeActions!(doc, { start: 0, end: 30 } as unknown as vscode.Range,
+		{ only: new Kind('quickfix'), diagnostics: [] } as unknown as vscode.CodeActionContext, {} as vscode.CancellationToken) as vscode.CodeAction[];
+	try {
+		const old = actions()[0].command!;
+		extension.events.get('config')!({ affectsConfiguration: () => true });
+		actions();
+		await extension.commands.get(old.command)!(...old.arguments!);
+		assert.equal(extension.applied.length, 0);
+		assert.match(extension.messages[0], /Request the quick fix again/);
+	} finally { extension.dispose(); }
 });

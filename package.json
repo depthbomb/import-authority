@@ -58,6 +58,11 @@
 		"configuration": {
 			"title": "Import Authority",
 			"properties": {
+				"importAuthority.features.enableDiagnostics": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show live import organization diagnostics and targeted quick fixes in open documents."
+				},
 				"importAuthority.typeImports.convertTypeOnlyImports": {
 					"type": "boolean",
 					"default": true,
