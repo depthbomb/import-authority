@@ -23,13 +23,13 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
-		"@types/vscode": "1.110.0",
-		"@typescript-eslint/eslint-plugin": "^8.68.0",
-		"@typescript-eslint/parser": "^8.68.0",
+		"@types/vscode": "1.136.0",
+		"@typescript-eslint/eslint-plugin": "^8.69.0",
+		"@typescript-eslint/parser": "^8.69.0",
 		"esbuild": "^0.28.2",
-		"eslint": "^10.9.1",
+		"eslint": "^10.10.0",
 		"npm-run-all2": "^8.0.4",
-		"tsx": "^4.23.12",
+		"tsx": "^4.23.13",
 		"typescript": "^6.0.3"
 	},
 	"categories": [
