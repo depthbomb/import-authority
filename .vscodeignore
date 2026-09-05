@@ -4,6 +4,7 @@
 out/**
 node_modules/**
 src/**
+benchmarks/**
 .gitignore
 .yarnrc.yml
 esbuild.js

@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('batch replacement preserves every statement across many import blocks', () => {
+	const input = Array.from({ length: 250 }, (_, index) =>
+		`import { Used${index}, Unused${index} } from 'module${index}';\nconsole.log(Used${index});`,
+	).join('\r\n') + '\r\n';
+	for (const transform of [organizeImportsContent, removeUnusedImportsByScan]) {
+		const output = transform(input);
+		const statements = ts.createSourceFile('file.ts', output, ts.ScriptTarget.Latest, true).statements;
+		assert.equal(statements.length, 500);
+		for (let index = 0; index < 250; index += 1) {
+			assert.equal(statements[index * 2 + 1].getText(), `console.log(Used${index});`);
+		}
+		assert.equal(transform(output), output);
+	}
+});
+
 test('normalizes paths once and preserves ambiguous repeated index suffixes', () => {
 	for (const [inputPath, expectedPath] of [
 		['./foo/index/index/index', './foo/index/index/index'],

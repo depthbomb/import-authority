@@ -652,38 +652,35 @@ function withDefaults(options?: Partial<OrganizerOptions>): OrganizerOptions {
 	};
 }
 
-function rebuildImportBlock(
+type ImportBlockEdit = { start: number; end: number; text: string };
+
+function createImportBlockEdit(
 	content: string,
 	imports: ts.ImportDeclaration[],
 	organizedImports: string,
-): string {
-	if (imports.length === 0) {
-		return content;
+	eol: string,
+): ImportBlockEdit {
+	const firstImport = imports[0];
+	const start = collectMovableLeadingCommentRanges(content, firstImport)[0]?.pos ?? firstImport.getStart();
+	const lastImport = imports[imports.length - 1];
+	const comments = ts.getTrailingCommentRanges(content, lastImport.getEnd()) ?? [];
+	let end = comments.at(-1)?.end ?? lastImport.getEnd();
+	for (let cursor = end; cursor < content.length && /\s/.test(content[cursor]); cursor += 1) {
+		if (content[cursor] === '\n') { end = cursor + 1; }
 	}
+	const block = organizedImports.trim();
+	return { start, end, text: block ? block + eol + (end < content.length ? eol : '') : '' };
+}
 
-	const eol                   = detectEol(content);
-	const firstImport           = imports[0];
-	const firstImportStart = collectMovableLeadingCommentRanges(content, firstImport)[0]?.pos ?? firstImport.getStart();
-	const lastImport            = imports[imports.length - 1];
-	const lastImportEnd = (() => {
-		const comments = ts.getTrailingCommentRanges(content, lastImport.getEnd()) ?? [];
-		return comments.at(-1)?.end ?? lastImport.getEnd();
-	})();
-
-	const beforeImports       = content.slice(0, firstImportStart);
-	const afterImports        = content.slice(lastImportEnd).replace(/^(?:\s*\r?\n)+/, '');
-	const importBlock         = organizedImports.trim();
-	const beforeWithGap       = beforeImports;
-
-	if (!importBlock) {
-		return `${beforeWithGap}${afterImports}`;
+function applyImportBlockEdits(content: string, edits: ImportBlockEdit[]): string {
+	const parts: string[] = [];
+	let cursor = 0;
+	for (const edit of edits) {
+		parts.push(content.slice(cursor, edit.start), edit.text);
+		cursor = edit.end;
 	}
-
-	if (!afterImports) {
-		return `${beforeWithGap}${importBlock}${eol}`;
-	}
-
-	return `${beforeWithGap}${importBlock}${eol}${eol}${afterImports}`;
+	parts.push(content.slice(cursor));
+	return parts.join('');
 }
 
 function isRelativeModule(moduleName: string): boolean {
@@ -1045,10 +1042,9 @@ export function removeUnusedImportsByScan(content: string, filePath = 'file.ts')
 
 	const usedIdentifiers = collectUsedIdentifiers(sourceFile, content);
 	const eol = detectEol(content);
-	let nextContent = content;
+	const edits: ImportBlockEdit[] = [];
 
-	for (let index = importBlocks.length - 1; index >= 0; index--) {
-		const block = importBlocks[index];
+	for (const block of importBlocks) {
 		const keptImports: string[] = [];
 
 		for (const statement of block) {
@@ -1068,14 +1064,10 @@ export function removeUnusedImportsByScan(content: string, filePath = 'file.ts')
 			keptImports.push(trailingComment ? `${importText} ${trailingComment}` : importText);
 		}
 
-		nextContent = rebuildImportBlock(
-			nextContent,
-			block,
-			keptImports.join(eol),
-		);
+		edits.push(createImportBlockEdit(content, block, keptImports.join(eol), eol));
 	}
 
-	return nextContent;
+	return applyImportBlockEdits(content, edits);
 }
 
 type ParsedStartTag = {
@@ -1305,10 +1297,9 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 	}
 
 	const eol = detectEol(content);
-	let nextContent = content;
+	const edits: ImportBlockEdit[] = [];
 
-	for (let index = importBlocks.length - 1; index >= 0; index--) {
-		const block = importBlocks[index];
+	for (const block of importBlocks) {
 		const { records } = toImportRecords(sourceFile, content, block, resolvedOptions.typeImportStyle === 'inline');
 		const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
 		let prepared = prepareImports(baseRecords, resolvedOptions, eol);
@@ -1316,14 +1307,10 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 		prepared = applyAlignmentAndResort(prepared, resolvedOptions);
 
 		const organizedImports = joinImports(prepared, eol, resolvedOptions.groupImports);
-		nextContent = rebuildImportBlock(
-			nextContent,
-			block,
-			organizedImports,
-		);
+		edits.push(createImportBlockEdit(content, block, organizedImports, eol));
 	}
 
-	return nextContent;
+	return applyImportBlockEdits(content, edits);
 }
 
 export function organizeImportsContent(
