@@ -442,7 +442,9 @@ function normalizeRelativeModuleName(moduleName: string): string {
 		normalized = `./${normalized}`;
 	}
 
-	if (normalized.endsWith('/index')) {
+	// A repeated index suffix is ambiguous: removing one segment on every run
+	// changes the target again. Keep it intact without module-resolution evidence.
+	if (normalized.endsWith('/index') && !normalized.endsWith('/index/index')) {
 		normalized = normalized.slice(0, -('/index'.length));
 		if (normalized === '') {
 			normalized = '.';
@@ -500,10 +502,7 @@ function formatImport(record: ImportRecord, options: OrganizerOptions, eol: stri
 		: options.semicolonPolicy === 'never'
 			? ''
 			: record.hadSemicolon ? ';' : '';
-	const moduleName = options.normalizeRelativePaths
-		? normalizeRelativeModuleName(record.moduleName)
-		: record.moduleName;
-	const moduleLiteral = quoteModuleName(moduleName, quote);
+	const moduleLiteral = quoteModuleName(record.moduleName, quote);
 	const attributesSuffix = record.attributesText ? ` ${record.attributesText}` : '';
 
 	if (record.isSideEffect) {

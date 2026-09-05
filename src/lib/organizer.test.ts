@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('normalizes paths once and preserves ambiguous repeated index suffixes', () => {
+	for (const [inputPath, expectedPath] of [
+		['./foo/index/index/index', './foo/index/index/index'],
+		['./foo/index/index', './foo/index/index'],
+		['./foo/../bar/index', './bar'],
+		['./index', './'],
+		['../index', '..'],
+	]) {
+		const options = { normalizeRelativePaths: true };
+		const output = organizeImportsContent(`import { A } from '${inputPath}';\nconsole.log(A);\n`, 'file.ts', options);
+		assert.ok(output.includes(`from '${expectedPath}'`));
+		assert.equal(organizeImportsContent(output, 'file.ts', options), output);
+	}
+});
+
 test('preserves detached comments, file headers and comments before directives exactly once', () => {
 	for (const eol of ['\n', '\r\n']) {
 		const input = [
