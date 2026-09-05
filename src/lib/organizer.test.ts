@@ -1,6 +1,6 @@
+import ts from 'typescript';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
 test('indexed duplicate merging keeps the earliest compatible bindings after clause mutations', () => {

@@ -2,9 +2,9 @@ import ts from 'typescript';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { statSync, existsSync } from 'node:fs';
-import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
 import { createMinimalOffsetEdit } from './lib/text-edit';
 import { requestUnusedImportEdits } from './lib/unused-provider';
+import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,

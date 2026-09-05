@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type * as vscode from 'vscode';
 import { requestUnusedImportEdits } from './unused-provider';
+import type * as vscode from 'vscode';
 
 const uri = { toString: () => 'file:///test.ts' } as vscode.Uri;
 const range = {} as vscode.Range;
