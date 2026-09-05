@@ -8,6 +8,13 @@ Opinionated import organizer for JavaScript, TypeScript, and Vue in VS Code.
 
 - `Organize Imports`: applies rules directly to the active document.
 - `Preview Organized Imports`: opens a diff preview without modifying your file.
+- `Explain Import Organization`: analyzes the active file and opens a report in the **Import Authority** output channel without modifying the file.
+
+Manual organization reports whether imports changed and explains skipped work. Save actions and formatting write reports to the output channel without success notifications. Preview titles include counts; detailed explanations are available in the output channel.
+
+Reports distinguish syntax errors, ignore directives, missing supported Vue scripts, malformed Vue markup, unavailable or failing unused-import providers, and files that are already organized. When only some Vue script blocks can be organized, the report identifies the skipped work alongside the changes.
+
+Counts describe declarations merged and declarations moved by the organizer after optional language-service edits. Movement counts compare positions after consolidation, within each editable import block. Removed bindings count distinct module/local-name pairs removed by unused-import processing, so merging duplicate declarations does not count as unused removal. Formatting-only changes can have zero counts.
 
 ## Behavior
 
@@ -67,7 +74,7 @@ The extension registers `source.organizeImports.importAuthority`, which also app
 }
 ```
 
-Use `"always"` instead of `"explicit"` to include automatic saves. Other explicitly enabled organizer actions should be disabled if you want only Import Authority to organize imports.
+Use `"always"` instead of `"explicit"` to include automatic saves on focus or window changes. Other explicitly enabled organizer actions should be disabled if you want only Import Authority to organize imports.
 
 ## Supported files
 

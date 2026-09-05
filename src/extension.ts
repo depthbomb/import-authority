@@ -3,13 +3,15 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { statSync, existsSync } from 'node:fs';
 import { createMinimalOffsetEdit } from './lib/text-edit';
-import { requestUnusedImportEdits } from './lib/unused-provider';
-import { organizeImportsContent, removeUnusedImportsByScan, hasImportAuthorityDirectives } from './lib/organizer';
+import { requestUnusedImportResult } from './lib/unused-provider';
+import { describeOrganization, describeOrganizationCounts } from './lib/organization-report';
+import { organizeImportsWithReport, removeUnusedImportsByScan } from './lib/organizer';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,
 	TypeImportStyle,
 	OrganizerOptions,
+	OrganizationReport,
 	SideEffectPlacement,
 	ModuleSpecifierOrder,
 	DuplicateImportPolicy
@@ -28,6 +30,7 @@ type ExtensionOptions = {
 
 const COMMAND_ORGANIZE = 'import-authority.organizeImports';
 const COMMAND_PREVIEW  = 'import-authority.previewOrganizeImports';
+const COMMAND_EXPLAIN  = 'import-authority.explainImports';
 const PREVIEW_SCHEME   = 'import-authority-preview';
 const CONFIG_NAMESPACE = 'importAuthority';
 
@@ -256,12 +259,29 @@ async function removeUnusedImports(
 	document: vscode.TextDocument,
 	useScanFallback: boolean,
 	expectedVersion: number,
+	report: OrganizationReport,
+	notes: string[],
 ): Promise<string | undefined> {
-	if (hasImportAuthorityDirectives(content, getVirtualFilePath(document))) {
-		return useScanFallback ? removeUnusedImportsByScan(content, getVirtualFilePath(document)) : content;
+	const fallback = (): string => {
+		if (!useScanFallback) { return content; }
+		if (path.extname(getVirtualFilePath(document)).toLowerCase() === '.vue' || report.hasJsx) {
+			notes.push('Heuristic removal skipped because Vue templates or JSX may use imports implicitly.');
+			return content;
+		}
+		const scanned = removeUnusedImportsByScan(content, getVirtualFilePath(document));
+		notes.push(scanned === content ? 'Heuristic removal found no removable imports.' : 'Heuristic unused-import removal applied.');
+		return scanned;
+	};
+	if (report.reasons.some(reason => ['syntax-error', 'ignored-file', 'malformed-vue', 'no-supported-scripts'].includes(reason))) {
+		notes.push('Unused-import removal skipped because the file contains a skipped source block.');
+		return content;
+	}
+	if (report.hasDirectives) {
+		notes.push('Language-service removal skipped to preserve Import Authority directives.');
+		return fallback();
 	}
 	try {
-		const edits = await requestUnusedImportEdits(
+		const removal = await requestUnusedImportResult(
 			document,
 			new vscode.Range(document.positionAt(0), document.positionAt(content.length)),
 			(...args) => vscode.commands.executeCommand<(vscode.CodeAction | vscode.Command)[]>(...args),
@@ -272,48 +292,52 @@ async function removeUnusedImports(
 
 		let result = content;
 
-		if (edits.length > 0) {
-			result = applyTextEdits(content, edits, document);
+		if (removal.edits.length > 0) {
+			result = applyTextEdits(content, removal.edits, document);
 		}
-
-		if (result === content && useScanFallback) {
-			return removeUnusedImportsByScan(content, getVirtualFilePath(document));
+		if (result === content) {
+			notes.push(removal.status === 'unavailable'
+				? 'No compatible unused-import provider was available.' : 'The language service returned no unused-import changes.');
+			return fallback();
 		}
-
+		notes.push('Language-service unused-import edits applied.');
 		return result;
 	} catch {
 		if (document.version !== expectedVersion) {
 			return undefined;
 		}
-		if (useScanFallback) {
-			return removeUnusedImportsByScan(content, getVirtualFilePath(document));
-		}
-
-		return content;
+		notes.push('The unused-import provider failed.');
+		return fallback();
 	}
 }
 
-type OrganizedContent = { original: string; organized: string; version: number };
+type OrganizedContent = { original: string; organized: string; version: number; summary: string; counts: string };
 
 async function computeOrganizedContent(document: vscode.TextDocument): Promise<OrganizedContent | undefined> {
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		const version  = document.version;
 		const options  = getOptions(document);
 		const original = document.getText();
+		const filePath = getVirtualFilePath(document);
+		const initialReport = organizeImportsWithReport(original, filePath, options.organizer);
+		const notes: string[] = [];
 		const contentAfterUnusedRemoval = options.removeUnusedImportsFirst
-			? await removeUnusedImports(original, document, options.fallbackRemoveUnusedImportsByScan, version)
+			? await removeUnusedImports(original, document, options.fallbackRemoveUnusedImportsByScan, version, initialReport, notes)
 			: original;
 
 		if (contentAfterUnusedRemoval === undefined || document.version !== version) {
 			continue;
 		}
 
-		const organized = organizeImportsContent(
-			contentAfterUnusedRemoval,
-			getVirtualFilePath(document),
-			options.organizer,
-		);
-		return { original, organized, version };
+		const report = contentAfterUnusedRemoval === original ? initialReport
+			: organizeImportsWithReport(contentAfterUnusedRemoval, filePath, options.organizer);
+		const removed = [...initialReport.bindings].filter(binding => !report.bindings.has(binding)).length;
+		if (initialReport.importCount > 0) { report.reasons = report.reasons.filter(reason => reason !== 'no-imports'); }
+		const organized = report.content;
+		return {
+			original, organized, version, summary: describeOrganization(report, organized !== original, removed, notes),
+			counts: describeOrganizationCounts(report, removed),
+		};
 	}
 
 	return undefined;
@@ -329,9 +353,9 @@ function createMinimalTextEdit(document: vscode.TextDocument, original: string, 
 	return vscode.TextEdit.replace(range, edit.newText);
 }
 
-async function applyOrganizedContent(document: vscode.TextDocument): Promise<void> {
+async function applyOrganizedContent(document: vscode.TextDocument, output: vscode.OutputChannel, notify: boolean): Promise<void> {
 	if (!isSupportedDocument(document)) {
-		void vscode.window.showWarningMessage('Only JavaScript and TypeScript files are supported.');
+		void vscode.window.showWarningMessage('Only JavaScript, TypeScript, and Vue files are supported.');
 		return;
 	}
 
@@ -343,6 +367,8 @@ async function applyOrganizedContent(document: vscode.TextDocument): Promise<voi
 
 	const edit = createMinimalTextEdit(document, result.original, result.organized);
 	if (!edit) {
+		output.appendLine(`${document.fileName}: ${result.summary}`);
+		if (notify) { void vscode.window.showInformationMessage(result.summary); }
 		return;
 	}
 	if (document.version !== result.version) {
@@ -356,6 +382,9 @@ async function applyOrganizedContent(document: vscode.TextDocument): Promise<voi
 
 	if (!updated) {
 		void vscode.window.showErrorMessage('Import Authority failed to apply edits.');
+	} else {
+		output.appendLine(`${document.fileName}: ${result.summary}`);
+		if (notify) { void vscode.window.showInformationMessage(result.summary); }
 	}
 }
 
@@ -379,6 +408,7 @@ class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
 }
 
 class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEditProvider {
+	constructor(private readonly output: vscode.OutputChannel) {}
 	public async provideDocumentFormattingEdits(document: vscode.TextDocument): Promise<vscode.TextEdit[]> {
 		if (!isSupportedDocument(document) || !isFormattingEnabled(document)) {
 			return [];
@@ -390,6 +420,7 @@ class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEdit
 		}
 
 		const edit = createMinimalTextEdit(document, result.original, result.organized);
+		this.output.appendLine(`${document.fileName}: ${result.summary}`);
 		return edit ? [edit] : [];
 	}
 
@@ -397,7 +428,8 @@ class ImportAuthorityFormattingProvider implements vscode.DocumentFormattingEdit
 
 export function activate(context: vscode.ExtensionContext): void {
 	const previewProvider    = new PreviewContentProvider();
-	const formattingProvider = new ImportAuthorityFormattingProvider();
+	const output = vscode.window.createOutputChannel('Import Authority');
+	const formattingProvider = new ImportAuthorityFormattingProvider(output);
 	const configWatcher = vscode.workspace.createFileSystemWatcher('**/{tsconfig*.json,jsconfig*.json}');
 	const clearConfigCaches = (): void => {
 		aliasPrefixCache.clear();
@@ -405,6 +437,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	};
 
 	context.subscriptions.push(
+		output,
 		previewProvider,
 		configWatcher,
 		configWatcher.onDidCreate(clearConfigCaches),
@@ -428,7 +461,22 @@ export function activate(context: vscode.ExtensionContext): void {
 				return;
 			}
 
-			await applyOrganizedContent(document);
+			await applyOrganizedContent(document, output, !targetUri);
+		}),
+		vscode.commands.registerCommand(COMMAND_EXPLAIN, async () => {
+			const document = vscode.window.activeTextEditor?.document;
+			if (!document) { return; }
+			if (!isSupportedDocument(document)) {
+				void vscode.window.showWarningMessage('Only JavaScript, TypeScript, and Vue files are supported.');
+				return;
+			}
+			const result = await computeOrganizedContent(document);
+			if (!result || document.version !== result.version) {
+				void vscode.window.showWarningMessage('The document changed while imports were being analyzed. Please try again.');
+				return;
+			}
+			output.appendLine(`${document.fileName} (proposed): ${result.summary}`);
+			output.show(true);
 		}),
 		vscode.commands.registerCommand(COMMAND_PREVIEW, async () => {
 			const editor = vscode.window.activeTextEditor;
@@ -437,7 +485,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 
 			if (!isSupportedDocument(editor.document)) {
-				void vscode.window.showWarningMessage('Only JavaScript and TypeScript files are supported.');
+				void vscode.window.showWarningMessage('Only JavaScript, TypeScript, and Vue files are supported.');
 				return;
 			}
 
@@ -446,8 +494,9 @@ export function activate(context: vscode.ExtensionContext): void {
 				void vscode.window.showWarningMessage('The document changed while the preview was being prepared. Please try again.');
 				return;
 			}
+			output.appendLine(`${editor.document.fileName} (preview): ${result.summary}`);
 			if (result.organized === result.original) {
-				void vscode.window.showInformationMessage('Imports are already organized.');
+				void vscode.window.showInformationMessage(result.summary);
 				return;
 			}
 
@@ -464,7 +513,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				'vscode.diff',
 				editor.document.uri,
 				previewUri,
-				`Import Authority Preview: ${baseName}`,
+				`Import Authority Preview: ${baseName} — ${result.counts}`,
 			);
 		}),
 	);

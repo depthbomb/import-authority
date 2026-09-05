@@ -386,9 +386,8 @@ function toImportRecords(
 	return { records, imports };
 }
 
-function getContiguousImportBlocks(sourceFile: ts.SourceFile): Array<ts.ImportDeclaration[]> {
+function getContiguousImportBlocks(sourceFile: ts.SourceFile, protection = getImportProtection(sourceFile)): Array<ts.ImportDeclaration[]> {
 	const blocks = [] as Array<ts.ImportDeclaration[]>;
-	const protection = getImportProtection(sourceFile);
 	if (protection.fileIgnored) { return blocks; }
 
 	let current = [] as ts.ImportDeclaration[];
@@ -1362,7 +1361,7 @@ function findElementClose(
 	return undefined;
 }
 
-function findVueScriptBlocks(content: string, filePath: string): VueScriptBlock[] | undefined {
+function findVueScriptBlocks(content: string, filePath: string, onUnsupported?: () => void): VueScriptBlock[] | undefined {
 	const blocks: VueScriptBlock[] = [];
 	let cursor = 0;
 	while (cursor < content.length) {
@@ -1385,6 +1384,7 @@ function findVueScriptBlocks(content: string, filePath: string): VueScriptBlock[
 			continue;
 		}
 		if (opening.selfClosing) {
+			if (opening.name === 'script') { onUnsupported?.(); }
 			cursor = opening.end;
 			continue;
 		}
@@ -1399,14 +1399,16 @@ function findVueScriptBlocks(content: string, filePath: string): VueScriptBlock[
 			return undefined;
 		}
 
-		if (opening.name === 'script' && !opening.attributes.has('src')) {
+		if (opening.name === 'script') {
 			const language = (opening.attributes.get('lang') ?? 'js').toLowerCase();
-			if (language === 'js' || language === 'jsx' || language === 'ts' || language === 'tsx') {
+			if (!opening.attributes.has('src') && (language === 'js' || language === 'jsx' || language === 'ts' || language === 'tsx')) {
 				blocks.push({
 					contentStart: opening.end,
 					contentEnd: close.contentEnd,
 					filePath: `${filePath}.${language}`,
 				});
+			} else {
+				onUnsupported?.();
 			}
 		}
 
@@ -1416,13 +1418,54 @@ function findVueScriptBlocks(content: string, filePath: string): VueScriptBlock[
 	return blocks;
 }
 
-function organizeScriptContent(content: string, filePath: string, options?: Partial<OrganizerOptions>): string {
+export type OrganizationReason = 'syntax-error' | 'ignored-file' | 'protected-imports' | 'no-imports' | 'no-supported-scripts' | 'unsupported-scripts' | 'malformed-vue';
+
+export type OrganizationReport = {
+	content: string;
+	merged: number;
+	moved: number;
+	protectedImports: number;
+	importCount: number;
+	hasDirectives: boolean;
+	hasJsx: boolean;
+	bindings: Set<string>;
+	reasons: OrganizationReason[];
+};
+
+function organizeScriptContent(content: string, filePath: string, options?: Partial<OrganizerOptions>, report?: OrganizationReport, scope = ''): string {
 	const resolvedOptions = withDefaults(options);
 	const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
-	if (hasParseDiagnostics(sourceFile)) {
+	const protection = getImportProtection(sourceFile);
+	if (report) {
+		report.hasDirectives ||= protection.hasDirectives;
+		const visit = (node: ts.Node): boolean => ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)
+			|| ts.isJsxFragment(node) || !!ts.forEachChild(node, visit);
+		report.hasJsx ||= visit(sourceFile);
+		for (const statement of sourceFile.statements.filter(ts.isImportDeclaration)) {
+			report.importCount += 1;
+			const clause = statement.importClause;
+			const names = clause?.namedBindings;
+			const namedBindings = names ? ts.isNamespaceImport(names)
+				? [names.name.text] : names.elements.map(element => element.name.text) : [];
+			const bindings = [clause?.name?.text, ...namedBindings];
+			const moduleName = ts.isStringLiteral(statement.moduleSpecifier)
+				? statement.moduleSpecifier.text : statement.moduleSpecifier.getText(sourceFile);
+			for (const binding of bindings) {
+				if (binding) { report.bindings.add(JSON.stringify([scope, moduleName, binding])); }
+			}
+		}
+		report.protectedImports += protection.protectedImports.size;
+		if (protection.protectedImports.size > 0) { report.reasons.push('protected-imports'); }
+	}
+	if (protection.fileIgnored) {
+		report?.reasons.push('ignored-file');
 		return content;
 	}
-	const importBlocks = getContiguousImportBlocks(sourceFile);
+	if (hasParseDiagnostics(sourceFile)) {
+		report?.reasons.push('syntax-error');
+		return content;
+	}
+	const importBlocks = getContiguousImportBlocks(sourceFile, protection);
 	if (importBlocks.length === 0) {
 		return content;
 	}
@@ -1434,8 +1477,13 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 		const { records } = toImportRecords(sourceFile, content, block, resolvedOptions.typeImportStyle === 'inline');
 		const baseRecords = mergeRecords(records, resolvedOptions.duplicateImportPolicy);
 		let prepared = prepareImports(baseRecords, resolvedOptions, eol);
+		const originalOrder = report ? [...prepared].sort((a, b) => a.sourceOrder - b.sourceOrder).map(entry => entry.sourceOrder) : [];
 		prepared.sort((a, b) => comparePreparedImports(a, b, resolvedOptions));
 		prepared = applyAlignmentAndResort(prepared, resolvedOptions);
+		if (report) {
+			report.merged += records.length - baseRecords.length;
+			report.moved += prepared.filter((entry, index) => entry.sourceOrder !== originalOrder[index]).length;
+		}
 
 		const organizedImports = joinImports(prepared, eol, resolvedOptions.groupImports);
 		edits.push(createImportBlockEdit(content, block, organizedImports, eol));
@@ -1449,24 +1497,44 @@ export function organizeImportsContent(
 	filePath = 'file.ts',
 	options?: Partial<OrganizerOptions>,
 ): string {
+	return organizeContent(content, filePath, options);
+}
+
+export function organizeImportsWithReport(content: string, filePath = 'file.ts', options?: Partial<OrganizerOptions>): OrganizationReport {
+	const report: OrganizationReport = {
+		content, merged: 0, moved: 0, protectedImports: 0, importCount: 0,
+		hasDirectives: false, hasJsx: false, bindings: new Set(), reasons: [],
+	};
+	report.content = organizeContent(content, filePath, options, report);
+	if (report.importCount === 0 && report.reasons.length === 0) { report.reasons.push('no-imports'); }
+	report.reasons = [...new Set(report.reasons)];
+	return report;
+}
+
+function organizeContent(content: string, filePath: string, options?: Partial<OrganizerOptions>, report?: OrganizationReport): string {
 	if (path.extname(filePath).toLowerCase() !== '.vue') {
-		return organizeScriptContent(content, filePath, options);
+		return organizeScriptContent(content, filePath, options, report);
 	}
 
-	const scriptBlocks = findVueScriptBlocks(content, filePath);
+	let skippedScripts = false;
+	const scriptBlocks = findVueScriptBlocks(content, filePath, () => { skippedScripts = true; });
 	if (!scriptBlocks) {
+		report?.reasons.push('malformed-vue');
 		return content;
 	}
+	if (scriptBlocks.length === 0) { report?.reasons.push('no-supported-scripts'); }
+	else if (skippedScripts) { report?.reasons.push('unsupported-scripts'); }
 	if (scriptBlocks.some(block => getImportProtection(ts.createSourceFile(
 		block.filePath, content.slice(block.contentStart, block.contentEnd), ts.ScriptTarget.Latest, true, getScriptKind(block.filePath),
 	)).fileIgnored)) {
+		if (report) { report.hasDirectives = true; report.reasons.push('ignored-file'); }
 		return content;
 	}
 	let nextContent = content;
 	for (let index = scriptBlocks.length - 1; index >= 0; index -= 1) {
 		const block = scriptBlocks[index];
 		const originalScript = content.slice(block.contentStart, block.contentEnd);
-		const organizedScript = organizeScriptContent(originalScript, block.filePath, options);
+		const organizedScript = organizeScriptContent(originalScript, block.filePath, options, report, String(index));
 		nextContent = `${nextContent.slice(0, block.contentStart)}${organizedScript}${nextContent.slice(block.contentEnd)}`;
 	}
 
