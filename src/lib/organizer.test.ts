@@ -5,10 +5,14 @@ import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
 test('indexed duplicate merging keeps the earliest compatible bindings after clause mutations', () => {
 	const input = [
-		...Array.from({ length: 100 }, (_, index) => `import Base${index} from 'm';`),
+		...Array.from({
+			length: 100
+		}, (_, index) => `import Base${index} from 'm';`),
 		"import * as Ns0 from 'm';", "import { foo } from 'm';",
 		"import * as Ns1 from 'm';", "import { bar } from 'm';",
-		...Array.from({ length: 100 }, (_, index) => `import type Type${index} from 'm';`),
+		...Array.from({
+			length: 100
+		}, (_, index) => `import type Type${index} from 'm';`),
 		"import type { Shape } from 'm';", "import type * as Types from 'm';",
 	].join('\n');
 	const output = organizeImportsContent(input);
@@ -22,16 +26,21 @@ test('indexed duplicate merging keeps the earliest compatible bindings after cla
 });
 
 test('batch replacement preserves every statement across many import blocks', () => {
-	const input = Array.from({ length: 250 }, (_, index) =>
+	const input = Array.from({
+		length: 250
+	}, (_, index) =>
 		`import { Used${index}, Unused${index} } from 'module${index}';\nconsole.log(Used${index});`,
 	).join('\r\n') + '\r\n';
+
 	for (const transform of [organizeImportsContent, removeUnusedImportsByScan]) {
-		const output = transform(input);
+		const output     = transform(input);
 		const statements = ts.createSourceFile('file.ts', output, ts.ScriptTarget.Latest, true).statements;
 		assert.equal(statements.length, 500);
+
 		for (let index = 0; index < 250; index += 1) {
 			assert.equal(statements[index * 2 + 1].getText(), `console.log(Used${index});`);
 		}
+
 		assert.equal(transform(output), output);
 	}
 });
@@ -44,8 +53,10 @@ test('normalizes paths once and preserves ambiguous repeated index suffixes', ()
 		['./index', './'],
 		['../index', '..'],
 	]) {
-		const options = { normalizeRelativePaths: true };
-		const output = organizeImportsContent(`import { A } from '${inputPath}';\nconsole.log(A);\n`, 'file.ts', options);
+		const options = {
+			normalizeRelativePaths: true
+		};
+		const output  = organizeImportsContent(`import { A } from '${inputPath}';\nconsole.log(A);\n`, 'file.ts', options);
 		assert.ok(output.includes(`from '${expectedPath}'`));
 		assert.equal(organizeImportsContent(output, 'file.ts', options), output);
 	}
@@ -59,11 +70,14 @@ test('preserves detached comments, file headers and comments before directives e
 			'// attached import comment', "import { b } from 'b';", '',
 			'console.log(aaa, b);', '',
 		].join(eol);
+
 		for (const transform of [organizeImportsContent, removeUnusedImportsByScan]) {
 			const output = transform(input);
+
 			for (const comment of ['// file header', '// explanation', '// @ts-check', '// detached section', '// attached import comment']) {
 				assert.equal(output.split(comment).length, 2);
 			}
+
 			assert.ok(output.startsWith(['// file header', '', '// explanation', '// @ts-check'].join(eol)));
 			assert.ok(output.indexOf('// detached section') > output.indexOf("from 'a'"));
 			assert.equal(transform(output), output);
@@ -89,14 +103,20 @@ test('alignment preserves string literals and contextual from binding names', ()
 		'import "side from effect";',
 		'import SomethingVeryLong from "path from here";',
 	].join('\n');
-	const options = { alignFromKeyword: true };
-	const output = organizeImportsContent(input, 'file.ts', options);
+	const options = {
+		alignFromKeyword: true
+	};
+	const output  = organizeImportsContent(input, 'file.ts', options);
 	const literals = (text: string): string[] => {
 		const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
-		const result: string[] = [];
+		const result  = [] as string[];
+
 		for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-			if (token === ts.SyntaxKind.StringLiteral) { result.push(scanner.getTokenValue()); }
+			if (token === ts.SyntaxKind.StringLiteral) {
+				result.push(scanner.getTokenValue());
+			}
 		}
+
 		return result.sort();
 	};
 	assert.deepEqual(literals(output), literals(input));
@@ -110,11 +130,15 @@ test('only merges import clauses allowed by TypeScript grammar', () => {
 		["import {} from 'm';", "import * as ns from 'm';"],
 	]) {
 		for (const input of [declarations.join('\n'), [...declarations].reverse().join('\n')]) {
-			const output = organizeImportsContent(input);
-			const options = { noLib: true, noEmit: true };
-			const host = ts.createCompilerHost(options);
+			const output  = organizeImportsContent(input);
+			const options = {
+				noLib:  true,
+				noEmit: true
+			};
+			const host    = ts.createCompilerHost(options);
 			host.getSourceFile = (name, target) => name === 'file.ts'
 				? ts.createSourceFile(name, output, target, true) : undefined;
+
 			const program = ts.createProgram(['file.ts'], options, host);
 			assert.deepEqual(program.getSyntacticDiagnostics(), []);
 			assert.ok(!program.getSemanticDiagnostics().some(diagnostic => diagnostic.code === 1363));
@@ -128,16 +152,20 @@ test('preserves executable code and complete comments following imports', () => 
 	for (const eol of ['\n', '\r\n']) {
 		for (const suffix of [' console.log(a);', ' /* start' + eol + 'end */' + eol + 'console.log(a);']) {
 			const input = "import { a } from 'a';" + suffix + eol;
+
 			for (const transform of [organizeImportsContent, removeUnusedImportsByScan]) {
 				const output = transform(input);
 				assert.ok(output.includes('console.log(a);'));
+
 				if (suffix.includes('/*')) {
 					assert.ok(output.includes('/* start' + eol + 'end */'));
 				}
+
 				assert.equal(transform(output), output);
 			}
 		}
 	}
+
 	assert.ok(removeUnusedImportsByScan("import { unused } from 'a'; run();").includes('run();'));
 });
 
@@ -299,7 +327,9 @@ test('supports semicolon policy', () => {
 		'doThing();',
 	].join('\n');
 
-	const output = organizeImportsContent(input, 'sample.ts', { semicolonPolicy: 'never' });
+	const output = organizeImportsContent(input, 'sample.ts', {
+		semicolonPolicy: 'never'
+	});
 	const expected = [
 		"import { A, Longer } from 'a'",
 		'',
@@ -317,7 +347,9 @@ test('supports preserving semicolon state', () => {
 		'x();',
 	].join('\n');
 
-	const output = organizeImportsContent(input, 'sample.ts', { semicolonPolicy: 'preserve' });
+	const output = organizeImportsContent(input, 'sample.ts', {
+		semicolonPolicy: 'preserve'
+	});
 	const expected = [
 		"import { B } from 'b'",
 		"import { A } from 'a';",
@@ -337,7 +369,7 @@ test('supports quote style policy', () => {
 	].join('\n');
 
 	const output = organizeImportsContent(input, 'sample.ts', {
-		quoteStyle: 'double',
+		quoteStyle:      'double',
 		semicolonPolicy: 'always',
 	});
 	const expected = [
@@ -399,7 +431,7 @@ test('groups imports with blank lines when enabled', () => {
 	].join('\n');
 
 	const output = organizeImportsContent(input, 'sample.ts', {
-		groupImports: true,
+		groupImports:  true,
 		aliasPrefixes: ['@app'],
 	});
 	const expected = [
@@ -427,7 +459,9 @@ test('uses module specifier secondary ordering when configured', () => {
 		'x();',
 	].join('\n');
 
-	const output = organizeImportsContent(input, 'sample.ts', { moduleSpecifierOrder: 'alpha' });
+	const output = organizeImportsContent(input, 'sample.ts', {
+		moduleSpecifierOrder: 'alpha'
+	});
 	const expected = [
 		"import { A } from 'a';",
 		"import { A } from 'b';",
@@ -501,13 +535,19 @@ test('inline style preserves the erasure of standalone type declarations', () =>
 });
 
 test('inline style keeps mixed bindings without adding runtime dependencies', () => {
-	const input = "import { value, type Foo } from './runtime';\nimport type { Bar } from './types';\nconsole.log(value);\n";
-	const options = { typeImportStyle: 'inline' as const };
-	const output = organizeImportsContent(input, 'file.ts', options);
+	const input   = "import { value, type Foo } from './runtime';\nimport type { Bar } from './types';\nconsole.log(value);\n";
+	const options = {
+		typeImportStyle: 'inline' as const
+	};
+	const output  = organizeImportsContent(input, 'file.ts', options);
 	assert.ok(output.includes("import { value, type Foo } from './runtime';"));
 	assert.ok(output.includes("import type { Bar } from './types';"));
+
 	const emit = (text: string): string => ts.transpileModule(text, {
-		compilerOptions: { module: ts.ModuleKind.ESNext, verbatimModuleSyntax: true },
+		compilerOptions: {
+			module:               ts.ModuleKind.ESNext,
+			verbatimModuleSyntax: true
+		},
 	}).outputText;
 	assert.equal(emit(output), emit(input));
 	assert.equal(organizeImportsContent(output, 'file.ts', options), output);
@@ -523,7 +563,7 @@ test('normalizes relative paths when enabled', () => {
 
 	const output = organizeImportsContent(input, 'sample.ts', {
 		normalizeRelativePaths: true,
-		moduleSpecifierOrder: 'alpha',
+		moduleSpecifierOrder:   'alpha',
 	});
 	const expected = [
 		"import { A } from './foo';",
@@ -605,7 +645,9 @@ test('aligns from keyword across single-line imports when enabled', () => {
 		'run();',
 	].join('\n');
 
-	const output = organizeImportsContent(input, 'sample.ts', { alignFromKeyword: true });
+	const output = organizeImportsContent(input, 'sample.ts', {
+		alignFromKeyword: true
+	});
 	const expected = [
 		"import { One }       from 'one';",
 		"import { Sixteen }   from 'sixteen';",
@@ -627,7 +669,7 @@ test('does not apply from-alignment to side-effect or multiline imports', () => 
 	].join('\n');
 
 	const output = organizeImportsContent(input, 'sample.ts', {
-		alignFromKeyword: true,
+		alignFromKeyword:          true,
 		namedImportsWrapThreshold: 55,
 	});
 	const expected = [
@@ -653,7 +695,9 @@ test('re-sorts by aligned lengths when from-alignment is enabled', () => {
 		'run();',
 	].join('\n');
 
-	const output = organizeImportsContent(input, 'sample.ts', { alignFromKeyword: true });
+	const output = organizeImportsContent(input, 'sample.ts', {
+		alignFromKeyword: true
+	});
 	const expected = [
 		"import { VeryLongImportedIdentifier } from 'x';",
 		"import { A }                          from 'abcdefghijklmnop';",
@@ -675,7 +719,7 @@ test('aligns from keyword per group when grouping is enabled', () => {
 
 	const output = organizeImportsContent(input, 'sample.ts', {
 		alignFromKeyword: true,
-		groupImports: true,
+		groupImports:     true,
 	});
 	const expected = [
 		"import { VeryLongBuiltinName } from 'node:fs';",
@@ -762,8 +806,10 @@ test('preserves string-named import specifiers', () => {
 });
 
 test('escapes module specifiers when enforcing quote style', () => {
-	const input = 'import { A } from "it\\\'s\\\\nested";\n\nconsole.log(A);';
-	const output = organizeImportsContent(input, 'sample.ts', { quoteStyle: 'single' });
+	const input  = 'import { A } from "it\\\'s\\\\nested";\n\nconsole.log(A);';
+	const output = organizeImportsContent(input, 'sample.ts', {
+		quoteStyle: 'single'
+	});
 	assert.equal(output, "import { A } from 'it\\\'s\\\\nested';\n\nconsole.log(A);");
 });
 

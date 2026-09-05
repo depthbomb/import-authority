@@ -4,7 +4,21 @@ Opinionated import organizer for JavaScript, TypeScript, and Vue in VS Code.
 
 **Get the extension [here](https://marketplace.visualstudio.com/items?itemName=CaprineLogic.import-authority)!**
 
+## Quick start
+
+Requires VS Code **1.110.0 or newer**. Open a JavaScript, TypeScript, or Vue file,
+then run **Import Authority: Organize Imports** from the Command Palette. Use
+**Import Authority: Preview Organized Imports** to review the changes first.
+
+Live diagnostics and automatic type-import conversion are enabled by default.
+Save actions and the formatting provider are opt-in; see the settings below.
+TypeScript is bundled, so basic organization does not require a workspace
+TypeScript installation. Namespace refactoring uses your project's available
+source files and module configuration.
+
 ## Commands
+
+All commands appear under **Import Authority** in the Command Palette.
 
 - `Organize Imports`: applies rules directly to the active document.
 - `Preview Organized Imports`: opens a diff preview without modifying your file.
@@ -130,6 +144,8 @@ Vue scripts with `src` or an unsupported `lang` are left unchanged. Heuristic fa
 
 ## Development
 
+Use Node.js 24 and the repository's pinned Yarn version.
+
 ```sh
 yarn install
 yarn test
@@ -139,6 +155,10 @@ Run `yarn lint` to lint `src` with Oxlint, or `yarn lint --fix` to apply availab
 fixes. Tests and production builds also run linting. Install the recommended Oxc
 VS Code extension for editor diagnostics.
 
+Statement bodies always use multiline braces, including empty bodies. This
+convention applies to source files, tests, build scripts, and benchmarks. Test
+fixture strings may contain intentionally compact code.
+
 `.oxlintrc.json` preserves the previous `curly`, `eqeqeq`, and `no-throw-literal`
 checks as errors and disables default correctness rules to keep the migration's
 rule scope unchanged. The former import naming convention and semicolon rules
@@ -146,3 +166,5 @@ are no longer enforced because Oxlint has no built-in equivalents; see the
 [Oxlint rule reference](https://oxc.rs/docs/guide/usage/linter/rules.html).
 
 Heuristic unused-import removal also skips files containing JSX because JSX factories and fragment bindings may be supplied implicitly by compiler or build configuration.
+
+Run `yarn package:vsix` to validate and build an installable extension package.

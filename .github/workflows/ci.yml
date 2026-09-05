@@ -17,6 +17,9 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: yarn install --immutable
-      - run: yarn test
-      - run: yarn package
-      - run: yarn dlx @vscode/vsce@3.9.2 ls --tree --no-dependencies
+      - run: yarn package:vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: import-authority-vsix
+          path: '*.vsix'
+          if-no-files-found: error

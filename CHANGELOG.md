@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-05
+
+### Added
+
+- Dedicated `source.organizeImports.importAuthority` save action
+- File, import, and region ignore directives, including pinned imports
+- Organization reports with change counts and explanations for skipped work
+- Automatic conversion of imports used only as types, enabled by default
+- Live import diagnostics and targeted quick fixes, enabled by default
+- Explicit namespace-to-named import conversion with reference updates and collision-safe aliases
+
+### Changed
+
+- Accelerated duplicate consolidation and edits across multiple import blocks
+- Grouped Command Palette commands under Import Authority
+- Added Marketplace categories, search keywords, and support links
+- Pinned packaging tools and aligned API types with the minimum supported VS Code version
+- Built and retained installable VSIX artifacts in CI, including bundled TypeScript licenses
+- Validated the production bundle with the extension integration tests before packaging
+
+### Fixed
+
+- Preserved executable code, trailing comments, detached comments, and directive headers around imports
+- Rejected invalid default, namespace, and type-only import merges
+- Kept `from` alignment from modifying string literals and contextual binding names
+- Preserved implicit JSX bindings during heuristic unused-import removal
+- Preserved module evaluation when reorganizing inline type imports
+- Requested resolved language-service unused-import actions
+- Made relative-path normalization stable across repeated organization
+
 ## [0.3.0] - 2026-08-24
 
 ### Added

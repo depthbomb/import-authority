@@ -1,18 +1,19 @@
 import type { OrganizationReason, OrganizationReport } from './organizer';
 
-const explanations: Record<OrganizationReason, string> = {
-	'syntax-error': 'Syntax errors prevented organization in the affected source block.',
-	'ignored-file': 'File skipped by import-authority-ignore-file.',
-	'protected-imports': 'Ignored, pinned, or disabled imports were preserved.',
-	'no-imports': 'No import declarations found.',
+const explanations = {
+	'syntax-error':         'Syntax errors prevented organization in the affected source block.',
+	'ignored-file':         'File skipped by import-authority-ignore-file.',
+	'protected-imports':    'Ignored, pinned, or disabled imports were preserved.',
+	'no-imports':           'No import declarations found.',
 	'no-supported-scripts': 'No supported inline Vue script blocks found.',
-	'unsupported-scripts': 'External or unsupported Vue script blocks were skipped.',
-	'malformed-vue': 'Malformed Vue markup prevented organization.',
-};
+	'unsupported-scripts':  'External or unsupported Vue script blocks were skipped.',
+	'malformed-vue':        'Malformed Vue markup prevented organization.',
+} as Record<OrganizationReason, string>;
 
 export function describeOrganization(report: OrganizationReport, changed: boolean, removed: number, notes: string[]): string {
 	const outcome = changed ? 'Imports organized.' : report.reasons.length > 0 ? 'No changes.' : 'Imports are already organized.';
-	const counts = `${describeOrganizationCounts(report, removed)}.`;
+	const counts  = `${describeOrganizationCounts(report, removed)}.`;
+
 	return [outcome, counts, ...report.reasons.map(reason => explanations[reason]), ...report.conversionNotes, ...notes].join(' ');
 }
 

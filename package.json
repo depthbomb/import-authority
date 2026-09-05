@@ -1,29 +1,37 @@
 {
 	"private": true,
 	"name": "import-authority",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"displayName": "Import Authority",
 	"description": "Opinionated JavaScript, TypeScript, and Vue import organizer for VS Code",
 	"publisher": "CaprineLogic",
 	"repository": "https://github.com/depthbomb/import-authority",
+	"homepage": "https://github.com/depthbomb/import-authority#readme",
+	"bugs": {
+		"url": "https://github.com/depthbomb/import-authority/issues"
+	},
+	"license": "SEE LICENSE IN LICENSE",
 	"main": "./dist/extension.js",
 	"engines": {
 		"vscode": "^1.110.0"
 	},
 	"scripts": {
-		"vscode:prepublish": "yarn run test && yarn run package",
+		"vscode:prepublish": "yarn run test && yarn run package && yarn run test:bundle",
 		"compile": "yarn run check-types && yarn run lint && node esbuild.js",
 		"watch": "run-p watch:esbuild watch:tsc",
 		"watch:esbuild": "node esbuild.js --watch",
 		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
 		"package": "yarn run check-types && yarn run lint && node esbuild.js --production",
+		"package:vsix": "vsce package --no-dependencies",
 		"check-types": "tsc --noEmit",
 		"lint": "oxlint src",
-		"test": "yarn run compile && tsx --test src/**/*.test.ts"
+		"test": "yarn run compile && tsx --test src/**/*.test.ts",
+		"test:bundle": "node scripts/test-bundle.cjs"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
-		"@types/vscode": "1.136.0",
+		"@types/vscode": "1.110.0",
+		"@vscode/vsce": "3.9.2",
 		"esbuild": "^0.28.2",
 		"npm-run-all2": "^8.0.4",
 		"oxlint": "^1.81.0",
@@ -31,7 +39,18 @@
 		"typescript": "^6.0.3"
 	},
 	"categories": [
-		"Other"
+		"Formatters",
+		"Linters"
+	],
+	"keywords": [
+		"imports",
+		"organize imports",
+		"typescript",
+		"javascript",
+		"vue",
+		"type imports",
+		"quick fixes",
+		"refactoring"
 	],
 	"activationEvents": [
 		"onLanguage:javascript",
@@ -44,18 +63,22 @@
 		"commands": [
 			{
 				"command": "import-authority.convertNamespaceImport",
+				"category": "Import Authority",
 				"title": "Convert Namespace Import to Named Imports"
 			},
 			{
 				"command": "import-authority.organizeImports",
+				"category": "Import Authority",
 				"title": "Organize Imports"
 			},
 			{
 				"command": "import-authority.previewOrganizeImports",
+				"category": "Import Authority",
 				"title": "Preview Organized Imports"
 			},
 			{
 				"command": "import-authority.explainImports",
+				"category": "Import Authority",
 				"title": "Explain Import Organization"
 			}
 		],
