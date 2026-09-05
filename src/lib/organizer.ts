@@ -2,6 +2,7 @@ import ts from 'typescript';
 import path from 'node:path';
 import { builtinModules } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { convertTypeOnlyImports } from './type-imports';
 
 export type SemicolonPolicy       = 'always' | 'never' | 'preserve';
 export type QuoteStyle            = 'single' | 'double' | 'preserve';
@@ -11,6 +12,9 @@ export type DuplicateImportPolicy = 'always' | 'namedOnly' | 'never';
 export type TypeImportStyle       = 'declaration' | 'inline';
 
 export type OrganizerOptions = {
+	convertTypeOnlyImports: boolean;
+	jsxFactory?: string;
+	jsxFragmentFactory?: string;
 	placeTypeImportsLast: boolean;
 	placeDefaultAndNamespaceImportsLast: boolean;
 	duplicateImportPolicy: DuplicateImportPolicy;
@@ -27,6 +31,7 @@ export type OrganizerOptions = {
 };
 
 export const DEFAULT_ORGANIZER_OPTIONS: OrganizerOptions = {
+	convertTypeOnlyImports: true,
 	placeTypeImportsLast: true,
 	placeDefaultAndNamespaceImportsLast: true,
 	duplicateImportPolicy: 'always',
@@ -1421,6 +1426,8 @@ function findVueScriptBlocks(content: string, filePath: string, onUnsupported?: 
 export type OrganizationReason = 'syntax-error' | 'ignored-file' | 'protected-imports' | 'no-imports' | 'no-supported-scripts' | 'unsupported-scripts' | 'malformed-vue';
 
 export type OrganizationReport = {
+	converted: number;
+	conversionNotes: string[];
 	content: string;
 	merged: number;
 	moved: number;
@@ -1434,8 +1441,20 @@ export type OrganizationReport = {
 
 function organizeScriptContent(content: string, filePath: string, options?: Partial<OrganizerOptions>, report?: OrganizationReport, scope = ''): string {
 	const resolvedOptions = withDefaults(options);
-	const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
-	const protection = getImportProtection(sourceFile);
+	let sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	let protection = getImportProtection(sourceFile);
+	if (resolvedOptions.convertTypeOnlyImports && !protection.fileIgnored && !hasParseDiagnostics(sourceFile)) {
+		const conversion = convertTypeOnlyImports(sourceFile, getContiguousImportBlocks(sourceFile, protection).flat(), resolvedOptions, resolvedOptions.typeImportStyle === 'inline');
+		if (report) {
+			report.converted += conversion.converted;
+			if (conversion.note) { report.conversionNotes.push(conversion.note); }
+		}
+		if (conversion.content !== content) {
+			content = conversion.content;
+			sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+			protection = getImportProtection(sourceFile);
+		}
+	}
 	if (report) {
 		report.hasDirectives ||= protection.hasDirectives;
 		const visit = (node: ts.Node): boolean => ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)
@@ -1502,18 +1521,24 @@ export function organizeImportsContent(
 
 export function organizeImportsWithReport(content: string, filePath = 'file.ts', options?: Partial<OrganizerOptions>): OrganizationReport {
 	const report: OrganizationReport = {
+		converted: 0, conversionNotes: [],
 		content, merged: 0, moved: 0, protectedImports: 0, importCount: 0,
 		hasDirectives: false, hasJsx: false, bindings: new Set(), reasons: [],
 	};
 	report.content = organizeContent(content, filePath, options, report);
 	if (report.importCount === 0 && report.reasons.length === 0) { report.reasons.push('no-imports'); }
 	report.reasons = [...new Set(report.reasons)];
+	report.conversionNotes = [...new Set(report.conversionNotes)];
 	return report;
 }
 
 function organizeContent(content: string, filePath: string, options?: Partial<OrganizerOptions>, report?: OrganizationReport): string {
 	if (path.extname(filePath).toLowerCase() !== '.vue') {
 		return organizeScriptContent(content, filePath, options, report);
+	}
+	if (withDefaults(options).convertTypeOnlyImports) {
+		report?.conversionNotes.push('Type-import conversion skipped for Vue because template references require the Vue language service.');
+		options = { ...options, convertTypeOnlyImports: false };
 	}
 
 	let skippedScripts = false;

@@ -58,6 +58,11 @@
 		"configuration": {
 			"title": "Import Authority",
 			"properties": {
+				"importAuthority.typeImports.convertTypeOnlyImports": {
+					"type": "boolean",
+					"default": true,
+					"description": "Convert TypeScript imports used only as types to type imports before organizing. Preserves runtime uses and protected imports; skips Vue and files with decorators or eval."
+				},
 				"importAuthority.sorting.placeTypeImportsLast": {
 					"type": "boolean",
 					"default": true,

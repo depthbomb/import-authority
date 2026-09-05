@@ -205,3 +205,28 @@ test('directives bypass external removal and preserve pinned imports during fall
 	assert.equal(ignored.providerCalls.length, 0);
 	assert.equal(ignored.applied.length, 0);
 });
+
+test('type-import conversion is enabled by default, configurable and read-only in previews', async () => {
+	const content = "import { Model, run } from 'pkg';\nlet value: Model; run();\n";
+	for (const enabled of [true, false]) {
+		const extension = activateTestExtension(content, enabled ? {} : { 'typeImports.convertTypeOnlyImports': false });
+		await extension.commands.get('import-authority.explainImports')!();
+		assert.equal(extension.applied.length, 0);
+		if (enabled) { assert.match(extension.logs[0], /1 converted to type imports/); }
+		else { assert.doesNotMatch(extension.logs[0], /converted to type imports/); }
+		await extension.commands.get('import-authority.organizeImports')!();
+		let result = content;
+		for (const edit of extension.applied.flatMap(change => change.edits)) {
+			result = result.slice(0, edit.range.start) + edit.newText + result.slice(edit.range.end);
+		}
+		assert.equal(result.includes("import type { Model } from 'pkg';"), enabled);
+	}
+	const preview = activateTestExtension(content, {
+		'unusedImports.useBuiltInRemoval': true, 'unusedImports.useFallbackRemoval': true,
+	});
+	await preview.commands.get('import-authority.previewOrganizeImports')!();
+	const diff = preview.providerCalls.find(call => call[0] === 'vscode.diff')!;
+	assert.match(String(diff[3]), /1 converted to type imports/);
+	assert.match(String(preview.previewProvider.provideTextDocumentContent(diff[2] as vscode.Uri, {} as vscode.CancellationToken)), /import type \{ Model \}/);
+	assert.equal(preview.applied.length, 0);
+});

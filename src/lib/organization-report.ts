@@ -13,9 +13,10 @@ const explanations: Record<OrganizationReason, string> = {
 export function describeOrganization(report: OrganizationReport, changed: boolean, removed: number, notes: string[]): string {
 	const outcome = changed ? 'Imports organized.' : report.reasons.length > 0 ? 'No changes.' : 'Imports are already organized.';
 	const counts = `${describeOrganizationCounts(report, removed)}.`;
-	return [outcome, counts, ...report.reasons.map(reason => explanations[reason]), ...notes].join(' ');
+	return [outcome, counts, ...report.reasons.map(reason => explanations[reason]), ...report.conversionNotes, ...notes].join(' ');
 }
 
 export function describeOrganizationCounts(report: OrganizationReport, removed: number): string {
-	return `${report.merged} merged, ${report.moved} moved, ${removed} binding${removed === 1 ? '' : 's'} removed`;
+	return `${report.merged} merged, ${report.moved} moved, ${removed} binding${removed === 1 ? '' : 's'} removed`
+		+ (report.converted > 0 ? `, ${report.converted} converted to type imports` : '');
 }

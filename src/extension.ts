@@ -18,6 +18,7 @@ import type {
 } from './lib/organizer';
 
 type AliasPrefixCacheEntry = {
+	compilerOptions?: ts.CompilerOptions;
 	mtimeMs: number;
 	prefixes: string[];
 };
@@ -172,7 +173,7 @@ function readAliasPrefixesFromConfig(configPath: string): string[] {
 		const paths = parsed.options.paths ?? {};
 		const prefixes = Object.keys(paths).map(normalizeAliasPrefix).filter(Boolean);
 		const deduped = dedupe(prefixes);
-		aliasPrefixCache.set(configPath, { mtimeMs, prefixes: deduped });
+		aliasPrefixCache.set(configPath, { mtimeMs, prefixes: deduped, compilerOptions: parsed.options });
 		return deduped;
 	} catch {
 		aliasPrefixCache.set(configPath, { mtimeMs: -1, prefixes: [] });
@@ -201,8 +202,15 @@ function getOptions(document: vscode.TextDocument): ExtensionOptions {
 	const detectPathAliases       = config.get<boolean>('sorting.detectPathAliases', true);
 	const configuredAliasPrefixes = (config.get<string[]>('sorting.aliasPrefixes', []) ?? []).map(normalizeAliasPrefix);
 	const aliasPrefixes           = dedupe([...configuredAliasPrefixes, ...(detectPathAliases ? getDetectedAliasPrefixes(document) : []) ]);
+	const convertTypeOnlyImports = config.get<boolean>('typeImports.convertTypeOnlyImports', true);
+	const configPath = convertTypeOnlyImports && document.uri.scheme === 'file' ? findNearestTsConfig(document.uri.fsPath) : null;
+	if (configPath) { readAliasPrefixesFromConfig(configPath); }
+	const compilerOptions = configPath ? aliasPrefixCache.get(configPath)?.compilerOptions : undefined;
 
 	const organizer: OrganizerOptions = {
+		convertTypeOnlyImports,
+		jsxFactory: compilerOptions?.jsxFactory,
+		jsxFragmentFactory: compilerOptions?.jsxFragmentFactory,
 		placeTypeImportsLast: config.get<boolean>('sorting.placeTypeImportsLast', true),
 		placeDefaultAndNamespaceImportsLast: config.get<boolean>('sorting.placeDefaultAndNamespaceImportsLast', true),
 		duplicateImportPolicy: config.get<DuplicateImportPolicy>('sorting.duplicateImportPolicy', 'always'),

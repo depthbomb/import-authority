@@ -21,6 +21,7 @@ Counts describe declarations merged and declarations moved by the organizer afte
 When you run `Organize Imports`, the extension enforces these rules by default:
 
 - Import declarations are sorted by full line length (ascending).
+- Value imports used exclusively as types are converted to type imports before sorting and merging (enabled by default).
 - Imports with a default or namespace (`* as`) binding are placed below plain named imports, then sorted by length.
 - `import type ...` declarations are placed below non-type imports.
 - Named imports are rewritten to a single line and sorted by name length.
@@ -45,6 +46,7 @@ When directives are present, language-service unused-import removal is skipped b
 
 ## Settings
 
+- `importAuthority.typeImports.convertTypeOnlyImports` (`true`): convert TypeScript import bindings used exclusively as types before organization.
 - `importAuthority.sorting.placeTypeImportsLast` (`true`): place type imports after non-type imports.
 - `importAuthority.sorting.placeDefaultAndNamespaceImportsLast` (`true`): place default/namespace imports after plain named imports.
 - `importAuthority.sorting.duplicateImportPolicy` (`always` | `namedOnly` | `never`): duplicate import consolidation strategy.
@@ -62,6 +64,32 @@ When directives are present, language-service unused-import removal is skipped b
 - `importAuthority.unusedImports.useBuiltInRemoval` (`false`): remove unused imports first using the language service, then apply organizer ordering.
 - `importAuthority.unusedImports.useFallbackRemoval` (`false`): if provider-based unused-import removal fails or has no effect, run a heuristic scan fallback.
 - `importAuthority.features.enableFormattingProvider` (`false`): enable document/range formatting support.
+
+## Automatic type imports
+
+By default, this input:
+
+```ts
+import { Model, run } from 'pkg';
+let value: Model;
+run();
+```
+
+becomes:
+
+```ts
+import { run } from 'pkg';
+import type { Model } from 'pkg';
+
+let value: Model;
+run();
+```
+
+Conversion uses TypeScript's local symbol binding to distinguish imported names from shadowed variables. It handles default and namespace imports, aliases, type queries, and explicit type exports. Bindings with runtime references or no references remain value imports. Mixed imports follow `style.typeImportStyle`; standalone type imports use erased declarations. Reports include the number of bindings converted.
+
+Ignore and pin directives also protect imports from conversion. JavaScript and Vue files, files containing decorators or direct `eval` calls, and imports containing internal comments, attributes, or deferred imports are left unconverted. JSX factory bindings from the nearest tsconfig/jsconfig and leading `@jsx`/`@jsxFrag` comments are preserved. Vue, decorator, and eval skips appear in reports.
+
+Converting the last value binding removes that declaration's runtime module dependency. If the module must execute for side effects, keep an explicit `import 'module';` or pin the import. Set `importAuthority.typeImports.convertTypeOnlyImports` to `false` to disable conversion.
 
 ## Source Organize Imports Integration
 
