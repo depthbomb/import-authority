@@ -574,9 +574,14 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 				|| !record.namespaceImport
 				|| candidate.namespaceImport === record.namespaceImport;
 			const wouldMixNamespaceAndNamed = !!(candidate.namespaceImport || record.namespaceImport)
-				&& (candidate.namedImports.length > 0 || record.namedImports.length > 0);
+				&& (candidate.hasNamedImportsClause || record.hasNamedImportsClause);
+			const wouldMixTypeDefaultAndBindings = record.isTypeOnly
+				&& !!(candidate.defaultImport || record.defaultImport)
+				&& !!(candidate.namespaceImport || record.namespaceImport
+					|| candidate.hasNamedImportsClause || record.hasNamedImportsClause);
 
-			return defaultImportsAreCompatible && namespaceImportsAreCompatible && !wouldMixNamespaceAndNamed;
+			return defaultImportsAreCompatible && namespaceImportsAreCompatible
+				&& !wouldMixNamespaceAndNamed && !wouldMixTypeDefaultAndBindings;
 		});
 		if (!existing) {
 			candidates.push({
@@ -592,6 +597,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		existing.defaultImport ??= record.defaultImport;
 		existing.namespaceImport ??= record.namespaceImport;
 		existing.namedImports.push(...record.namedImports);
+		existing.hasNamedImportsClause ||= record.hasNamedImportsClause;
 		existing.hadSemicolon ||= record.hadSemicolon;
 		if (record.trailingComment) {
 			if (!existing.trailingComment) {

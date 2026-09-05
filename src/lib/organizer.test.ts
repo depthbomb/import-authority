@@ -1,6 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
+
+test('only merges import clauses allowed by TypeScript grammar', () => {
+	for (const declarations of [
+		["import type Foo from 'm';", "import type { Bar } from 'm';"],
+		["import type Foo from 'm';", "import type * as Bar from 'm';"],
+		["import {} from 'm';", "import * as ns from 'm';"],
+	]) {
+		for (const input of [declarations.join('\n'), [...declarations].reverse().join('\n')]) {
+			const output = organizeImportsContent(input);
+			const options = { noLib: true, noEmit: true };
+			const host = ts.createCompilerHost(options);
+			host.getSourceFile = (name, target) => name === 'file.ts'
+				? ts.createSourceFile(name, output, target, true) : undefined;
+			const program = ts.createProgram(['file.ts'], options, host);
+			assert.deepEqual(program.getSyntacticDiagnostics(), []);
+			assert.ok(!program.getSemanticDiagnostics().some(diagnostic => diagnostic.code === 1363));
+			assert.equal(program.getSourceFile('file.ts')!.statements.length, 2);
+			assert.equal(organizeImportsContent(output), output);
+		}
+	}
+});
 
 test('preserves executable code and complete comments following imports', () => {
 	for (const eol of ['\n', '\r\n']) {
