@@ -16,6 +16,36 @@ runInThisContext(`(function(require,module,exports){${compiled}\n})`)(
 	createRequire(resolve('src/lib/organizer.ts')), baselineModule, baselineModule.exports,
 );
 const baseline = baselineModule.exports;
+// Exercise binding-index transitions against the previous implementation before
+// timing. A fixed seed makes failures reproducible without timing-based tests.
+let seed = 42;
+const random = maximum => {
+	seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+	return (seed >>> 8) % maximum;
+};
+for (let sample = 0; sample < 100; sample++) {
+	const imports = Array.from({ length: 80 }, (_, i) => `import Base${i} from 'module';`);
+	for (let i = 0; i < 120; i++) {
+		const name = `Binding${i}`;
+		imports.push([
+			`import ${name} from 'module';`,
+			`import * as ${name} from 'module';`,
+			`import { value as ${name} } from 'module';`,
+			`import type ${name} from 'module';`,
+			`import type * as ${name} from 'module';`,
+			`import type { Value as ${name} } from 'module';`,
+			`import ${name}, { value as Named${i} } from 'module';`,
+			`import ${name}, * as Namespace${i} from 'module';`,
+		][random(8)]);
+	}
+	const input = imports.join('\n') + '\n';
+	const options = { groupImports: !!random(2), typeImportStyle: random(2) ? 'inline' : 'declaration' };
+	assert.equal(current.organizeImportsContent(input, 'file.ts', options), baseline.organizeImportsContent(input, 'file.ts', options));
+}
+if (process.argv.includes('--verify-only')) {
+	console.log('100 deterministic mixed-import comparisons passed.');
+	process.exit(0);
+}
 console.log(JSON.stringify({ baseline: revision, node: process.version, typescript: ts.version, cpu: require('node:os').cpus()[0].model, warmups: 4, samples: 11 }));
 const median = values => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
 for (const count of [100, 1000, 5000]) {

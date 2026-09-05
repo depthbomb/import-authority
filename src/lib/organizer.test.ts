@@ -3,6 +3,24 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('indexed duplicate merging keeps the earliest compatible bindings after clause mutations', () => {
+	const input = [
+		...Array.from({ length: 100 }, (_, index) => `import Base${index} from 'm';`),
+		"import * as Ns0 from 'm';", "import { foo } from 'm';",
+		"import * as Ns1 from 'm';", "import { bar } from 'm';",
+		...Array.from({ length: 100 }, (_, index) => `import type Type${index} from 'm';`),
+		"import type { Shape } from 'm';", "import type * as Types from 'm';",
+	].join('\n');
+	const output = organizeImportsContent(input);
+	assert.ok(output.includes("import Base0, * as Ns0 from 'm';"));
+	assert.ok(output.includes("import Base1, { bar, foo } from 'm';"));
+	assert.ok(output.includes("import Base2, * as Ns1 from 'm';"));
+	assert.ok(output.includes("import type { Shape } from 'm';"));
+	assert.ok(output.includes("import type * as Types from 'm';"));
+	assert.equal(ts.createSourceFile('file.ts', output, ts.ScriptTarget.Latest).statements.length, 202);
+	assert.equal(organizeImportsContent(output), output);
+});
+
 test('batch replacement preserves every statement across many import blocks', () => {
 	const input = Array.from({ length: 250 }, (_, index) =>
 		`import { Used${index}, Unused${index} } from 'module${index}';\nconsole.log(Used${index});`,

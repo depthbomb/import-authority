@@ -562,12 +562,89 @@ function canMergeRecord(record: ImportRecord, policy: DuplicateImportPolicy): bo
 	return !record.defaultImport && !record.namespaceImport;
 }
 
+// Large duplicate buckets use binding/shape indexes. Each heap keeps source
+// order, and obsolete entries are discarded lazily when a merged clause changes.
+class MergeCandidateIndex {
+	private readonly heaps = new Map<string, ImportRecord[]>();
+	private readonly memberships = new Map<ImportRecord, Set<string>>();
+
+	constructor(records: ImportRecord[]) {
+		for (const record of records) { this.update(record); }
+	}
+
+	private shape(record: ImportRecord): string {
+		return record.namespaceImport ? 'namespace' : record.hasNamedImportsClause ? 'named' : 'bare';
+	}
+
+	public update(record: ImportRecord): void {
+		const keys = new Set<string>();
+		const oldKeys = this.memberships.get(record);
+		for (const defaultName of ['*', record.defaultImport ?? null]) {
+			for (const namespaceName of ['*', record.namespaceImport ?? null]) {
+				const key = JSON.stringify([defaultName, namespaceName, this.shape(record)]);
+				keys.add(key);
+				if (oldKeys?.has(key)) { continue; }
+				const heap = this.heaps.get(key) ?? [];
+				let index = heap.length;
+				heap.push(record);
+				while (index > 0) {
+					const parent = (index - 1) >>> 1;
+					if (heap[parent].sourceOrder <= record.sourceOrder) { break; }
+					heap[index] = heap[parent];
+					index = parent;
+				}
+				heap[index] = record;
+				this.heaps.set(key, heap);
+			}
+		}
+		this.memberships.set(record, keys);
+	}
+
+	private first(key: string): ImportRecord | undefined {
+		const heap = this.heaps.get(key);
+		while (heap?.length && !this.memberships.get(heap[0])?.has(key)) {
+			const last = heap.pop()!;
+			if (heap.length === 0) { break; }
+			let index = 0;
+			while (index * 2 + 1 < heap.length) {
+				let child = index * 2 + 1;
+				if (child + 1 < heap.length && heap[child + 1].sourceOrder < heap[child].sourceOrder) { child += 1; }
+				if (last.sourceOrder <= heap[child].sourceOrder) { break; }
+				heap[index] = heap[child];
+				index = child;
+			}
+			heap[index] = last;
+		}
+		return heap?.[0];
+	}
+
+	public find(record: ImportRecord): ImportRecord | undefined {
+		const defaults = record.defaultImport ? [null, record.defaultImport]
+			: record.isTypeOnly && (record.hasNamedImportsClause || record.namespaceImport) ? [null] : ['*'];
+		const namespaces = record.namespaceImport ? [null, record.namespaceImport] : ['*'];
+		const shapes = record.isTypeOnly && record.defaultImport ? ['bare']
+			: record.namespaceImport ? ['bare', 'namespace']
+				: record.hasNamedImportsClause ? ['bare', 'named'] : ['bare', 'named', 'namespace'];
+		let first: ImportRecord | undefined;
+		for (const defaultName of defaults) {
+			for (const namespaceName of namespaces) {
+				for (const shape of shapes) {
+					const candidate = this.first(JSON.stringify([defaultName, namespaceName, shape]));
+					if (candidate && (!first || candidate.sourceOrder < first.sourceOrder)) { first = candidate; }
+				}
+			}
+		}
+		return first;
+	}
+}
+
 function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): ImportRecord[] {
 	if (policy === 'never') {
 		return [...records];
 	}
 
 	const merged      = new Map<string, ImportRecord[]>();
+	let indexes: Map<string, MergeCandidateIndex> | undefined;
 	const passthrough = [] as ImportRecord[];
 
 	for (const record of records) {
@@ -584,7 +661,13 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		].join('|');
 
 		const candidates = merged.get(key) ?? [];
-		const existing = candidates.find(candidate => {
+		let candidateIndex = indexes?.get(key);
+		if (!candidateIndex && candidates.length >= 64) {
+			candidateIndex = new MergeCandidateIndex(candidates);
+			indexes ??= new Map();
+			indexes.set(key, candidateIndex);
+		}
+		const existing = candidateIndex ? candidateIndex.find(record) : candidates.find(candidate => {
 			const defaultImportsAreCompatible = !candidate.defaultImport
 				|| !record.defaultImport
 				|| candidate.defaultImport === record.defaultImport;
@@ -608,6 +691,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 				leadingComments: [...record.leadingComments],
 			});
 			merged.set(key, candidates);
+			candidateIndex?.update(candidates[candidates.length - 1]);
 
 			continue;
 		}
@@ -616,6 +700,7 @@ function mergeRecords(records: ImportRecord[], policy: DuplicateImportPolicy): I
 		existing.namespaceImport ??= record.namespaceImport;
 		existing.namedImports.push(...record.namedImports);
 		existing.hasNamedImportsClause ||= record.hasNamedImportsClause;
+		candidateIndex?.update(existing);
 		existing.hadSemicolon ||= record.hadSemicolon;
 		if (record.trailingComment) {
 			if (!existing.trailingComment) {
