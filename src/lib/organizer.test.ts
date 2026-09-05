@@ -3,6 +3,26 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('preserves detached comments, file headers and comments before directives exactly once', () => {
+	for (const eol of ['\n', '\r\n']) {
+		const input = [
+			'// file header', '', '// explanation', '// @ts-check',
+			"import { aaa } from 'a';", '', '// detached section', '',
+			'// attached import comment', "import { b } from 'b';", '',
+			'console.log(aaa, b);', '',
+		].join(eol);
+		for (const transform of [organizeImportsContent, removeUnusedImportsByScan]) {
+			const output = transform(input);
+			for (const comment of ['// file header', '// explanation', '// @ts-check', '// detached section', '// attached import comment']) {
+				assert.equal(output.split(comment).length, 2);
+			}
+			assert.ok(output.startsWith(['// file header', '', '// explanation', '// @ts-check'].join(eol)));
+			assert.ok(output.indexOf('// detached section') > output.indexOf("from 'a'"));
+			assert.equal(transform(output), output);
+		}
+	}
+});
+
 test('scan fallback preserves implicit classic and custom JSX factory bindings', () => {
 	for (const file of ['file.tsx', 'file.jsx', 'file.js']) {
 		for (const input of [

@@ -118,7 +118,7 @@ function splitNamedSpecifiers(namedImports: ts.NamedImports): { value: string[];
 	return { value, type };
 }
 
-function collectLeadingComments(content: string, statement: ts.ImportDeclaration): string[] {
+function collectMovableLeadingCommentRanges(content: string, statement: ts.ImportDeclaration): ts.CommentRange[] {
 	const ranges = ts.getLeadingCommentRanges(content, statement.getFullStart()) ?? [];
 	if (ranges.length === 0) {
 		return [];
@@ -138,7 +138,21 @@ function collectLeadingComments(content: string, statement: ts.ImportDeclaration
 		nextStart = range.pos;
 	}
 
-	return contiguous.reverse().map(range => content.slice(range.pos, range.end).trimEnd());
+	const attached = contiguous.reverse();
+	if (statement === (statement.parent as ts.SourceFile).statements[0]) {
+		for (let index = attached.length - 1; index >= 0; index -= 1) {
+			const range = attached[index];
+			if (isTypeScriptDirective(content.slice(range.pos, range.end))) {
+				return attached.slice(index + 1);
+			}
+		}
+	}
+	return attached;
+}
+
+function collectLeadingComments(content: string, statement: ts.ImportDeclaration): string[] {
+	return collectMovableLeadingCommentRanges(content, statement)
+		.map(range => content.slice(range.pos, range.end).trimEnd());
 }
 
 function collectTrailingComment(content: string, statement: ts.ImportDeclaration): string | undefined {
@@ -335,6 +349,11 @@ function getContiguousImportBlocks(sourceFile: ts.SourceFile): Array<ts.ImportDe
 
 	for (const statement of sourceFile.statements) {
 		if (ts.isImportDeclaration(statement)) {
+			const leading = ts.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? [];
+			if (current.length > 0 && leading.length > collectMovableLeadingCommentRanges(sourceFile.text, statement).length) {
+				blocks.push(current);
+				current = [];
+			}
 			current.push(statement);
 			continue;
 		}
@@ -638,7 +657,6 @@ function rebuildImportBlock(
 	content: string,
 	imports: ts.ImportDeclaration[],
 	organizedImports: string,
-	preserveFileDirectives: boolean,
 ): string {
 	if (imports.length === 0) {
 		return content;
@@ -646,8 +664,7 @@ function rebuildImportBlock(
 
 	const eol                   = detectEol(content);
 	const firstImport           = imports[0];
-	const firstImportStart      = firstImport.getFullStart();
-	const firstImportTokenStart = firstImport.getStart();
+	const firstImportStart = collectMovableLeadingCommentRanges(content, firstImport)[0]?.pos ?? firstImport.getStart();
 	const lastImport            = imports[imports.length - 1];
 	const lastImportEnd = (() => {
 		const comments = ts.getTrailingCommentRanges(content, lastImport.getEnd()) ?? [];
@@ -655,22 +672,9 @@ function rebuildImportBlock(
 	})();
 
 	const beforeImports       = content.slice(0, firstImportStart);
-	const leadingTrivia       = content.slice(firstImportStart, firstImportTokenStart);
-	const firstImportHasAttachedComments = collectLeadingComments(content, firstImport).length > 0;
-	const directiveComments = preserveFileDirectives
-		? collectLeadingComments(content, firstImport).filter(isTypeScriptDirective)
-		: [];
-	const preservedLeadingGap = directiveComments.length > 0
-		? `${directiveComments.join(eol)}${eol}`
-		: /^[\s]*$/.test(leadingTrivia) || (
-		firstImportStart === 0 &&
-		!firstImportHasAttachedComments
-	)
-		? leadingTrivia
-		: '';
 	const afterImports        = content.slice(lastImportEnd).replace(/^(?:\s*\r?\n)+/, '');
 	const importBlock         = organizedImports.trim();
-	const beforeWithGap       = `${beforeImports}${preservedLeadingGap}`;
+	const beforeWithGap       = beforeImports;
 
 	if (!importBlock) {
 		return `${beforeWithGap}${afterImports}`;
@@ -1069,7 +1073,6 @@ export function removeUnusedImportsByScan(content: string, filePath = 'file.ts')
 			nextContent,
 			block,
 			keptImports.join(eol),
-			block[0] === sourceFile.statements[0],
 		);
 	}
 
@@ -1318,7 +1321,6 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 			nextContent,
 			block,
 			organizedImports,
-			block[0] === sourceFile.statements[0],
 		);
 	}
 
