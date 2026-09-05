@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { statSync, existsSync } from 'node:fs';
 import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
 import { createMinimalOffsetEdit } from './lib/text-edit';
+import { requestUnusedImportEdits } from './lib/unused-provider';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,
@@ -250,23 +251,6 @@ function applyTextEdits(content: string, edits: vscode.TextEdit[], document: vsc
 	return result;
 }
 
-function getOrganizeProviderEditsForDocument(
-	organizeResult: vscode.WorkspaceEdit | vscode.TextEdit[],
-	document: vscode.TextDocument,
-): vscode.TextEdit[] {
-	if (Array.isArray(organizeResult)) {
-		return organizeResult;
-	}
-
-	const edits: vscode.TextEdit[] = [];
-	for (const [uri, uriEdits] of organizeResult.entries()) {
-		if (uri.toString() === document.uri.toString()) {
-			edits.push(...uriEdits);
-		}
-	}
-	return edits;
-}
-
 async function removeUnusedImports(
 	content: string,
 	document: vscode.TextDocument,
@@ -274,9 +258,10 @@ async function removeUnusedImports(
 	expectedVersion: number,
 ): Promise<string | undefined> {
 	try {
-		const organizeResult = await vscode.commands.executeCommand<vscode.WorkspaceEdit | vscode.TextEdit[]>(
-			'vscode.executeDocumentOrganizeImportsProvider',
-			document.uri,
+		const edits = await requestUnusedImportEdits(
+			document,
+			new vscode.Range(document.positionAt(0), document.positionAt(content.length)),
+			(...args) => vscode.commands.executeCommand<(vscode.CodeAction | vscode.Command)[]>(...args),
 		);
 		if (document.version !== expectedVersion) {
 			return undefined;
@@ -284,11 +269,8 @@ async function removeUnusedImports(
 
 		let result = content;
 
-		if (organizeResult) {
-			const edits = getOrganizeProviderEditsForDocument(organizeResult, document);
-			if (edits.length > 0) {
-				result = applyTextEdits(content, edits, document);
-			}
+		if (edits.length > 0) {
+			result = applyTextEdits(content, edits, document);
 		}
 
 		if (result === content && useScanFallback) {
