@@ -3,6 +3,27 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('alignment preserves string literals and contextual from binding names', () => {
+	const input = [
+		'import { "a from b" as ab } from "m";',
+		'import from from "n";',
+		'import "side from effect";',
+		'import SomethingVeryLong from "path from here";',
+	].join('\n');
+	const options = { alignFromKeyword: true };
+	const output = organizeImportsContent(input, 'file.ts', options);
+	const literals = (text: string): string[] => {
+		const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+		const result: string[] = [];
+		for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+			if (token === ts.SyntaxKind.StringLiteral) { result.push(scanner.getTokenValue()); }
+		}
+		return result.sort();
+	};
+	assert.deepEqual(literals(output), literals(input));
+	assert.equal(organizeImportsContent(output, 'file.ts', options), output);
+});
+
 test('only merges import clauses allowed by TypeScript grammar', () => {
 	for (const declarations of [
 		["import type Foo from 'm';", "import type { Bar } from 'm';"],

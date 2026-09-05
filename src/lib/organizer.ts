@@ -771,47 +771,39 @@ function prepareImports(records: ImportRecord[], options: OrganizerOptions, eol:
 	return prepared;
 }
 
-function alignFromKeyword(entries: PreparedImport[]): PreparedImport[] {
-	const leftLengths = entries
-		.filter(entry => !entry.sortText.includes('\n'))
-		.map(entry => entry.sortText.indexOf(' from '))
-		.filter(index => index > 0);
-
-	if (leftLengths.length === 0) {
-		return entries;
+function findFromKeyword(text: string): number {
+	const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+	let depth = 0;
+	let previousKind = ts.SyntaxKind.Unknown;
+	let previousStart = -1;
+	for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+		if (token === ts.SyntaxKind.StringLiteral && depth === 0) {
+			return previousKind === ts.SyntaxKind.FromKeyword ? previousStart : -1;
+		}
+		if (token === ts.SyntaxKind.OpenBraceToken) { depth += 1; }
+		if (token === ts.SyntaxKind.CloseBraceToken) { depth -= 1; }
+		previousKind = token;
+		previousStart = scanner.getTokenPos();
 	}
+	return -1;
+}
 
-	const maxLeft = Math.max(...leftLengths);
-	return entries.map(entry => {
-		if (entry.sortText.includes('\n')) {
-			return entry;
+function alignFromKeyword(entries: PreparedImport[]): PreparedImport[] {
+	const offsets = entries.map(entry => entry.sortText.includes('\n') ? -1 : findFromKeyword(entry.sortText));
+	let maxLeft = 0;
+	for (let index = 0; index < entries.length; index += 1) {
+		if (offsets[index] >= 0) {
+			maxLeft = Math.max(maxLeft, entries[index].sortText.slice(0, offsets[index]).trimEnd().length);
 		}
-
-		const fromIndexSort = entry.sortText.indexOf(' from ');
-		if (fromIndexSort <= 0) {
-			return entry;
-		}
-
-		const leftSort = entry.sortText.slice(0, fromIndexSort).replace(/\s+$/, '');
-		const rightSort = entry.sortText.slice(fromIndexSort + ' from '.length);
-		const spaces = ' '.repeat(Math.max(1, maxLeft - leftSort.length + 1));
-
-		const fromIndexText = entry.text.indexOf(' from ');
-		if (fromIndexText <= 0) {
-			return {
-				...entry,
-				sortText: `${leftSort}${spaces}from ${rightSort}`,
-			};
-		}
-
-		const leftText  = entry.text.slice(0, fromIndexText).replace(/\s+$/, '');
-		const rightText = entry.text.slice(fromIndexText + ' from '.length);
-
-		return {
-			...entry,
-			text: `${leftText}${spaces}from ${rightText}`,
-			sortText: `${leftSort}${spaces}from ${rightSort}`,
+	}
+	return entries.map((entry, index) => {
+		const offset = offsets[index];
+		if (offset < 0) { return entry; }
+		const align = (text: string): string => {
+			const left = text.slice(0, offset).trimEnd();
+			return left + ' '.repeat(maxLeft - left.length + 1) + text.slice(offset);
 		};
+		return { ...entry, text: align(entry.text), sortText: align(entry.sortText) };
 	});
 }
 
