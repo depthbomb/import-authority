@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('scan fallback preserves implicit classic and custom JSX factory bindings', () => {
+	for (const file of ['file.tsx', 'file.jsx', 'file.js']) {
+		for (const input of [
+			"import React from 'react';\nexport const node = <div />;\n",
+			"import { h, Fragment } from 'preact';\nexport const node = <><div /></>;\n",
+		]) {
+			assert.equal(removeUnusedImportsByScan(input, file), input);
+		}
+	}
+});
+
 test('alignment preserves string literals and contextual from binding names', () => {
 	const input = [
 		'import { "a from b" as ab } from "m";',

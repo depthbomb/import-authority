@@ -72,3 +72,5 @@ checks as errors and disables default correctness rules to keep the migration's
 rule scope unchanged. The former import naming convention and semicolon rules
 are no longer enforced because Oxlint has no built-in equivalents; see the
 [Oxlint rule reference](https://oxc.rs/docs/guide/usage/linter/rules.html).
+
+Heuristic unused-import removal also skips files containing JSX because JSX factories and fragment bindings may be supplied implicitly by compiler or build configuration.

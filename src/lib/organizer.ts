@@ -1027,6 +1027,14 @@ export function removeUnusedImportsByScan(content: string, filePath = 'file.ts')
 	if (hasParseDiagnostics(sourceFile)) {
 		return content;
 	}
+	// JSX factories and fragment bindings can be supplied by compiler or build
+	// configuration that this standalone heuristic cannot safely infer.
+	const containsJsx = (node: ts.Node): boolean => ts.isJsxElement(node)
+		|| ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node)
+		|| !!ts.forEachChild(node, containsJsx);
+	if (containsJsx(sourceFile)) {
+		return content;
+	}
 	const importBlocks = getContiguousImportBlocks(sourceFile);
 	if (importBlocks.length === 0) {
 		return content;
