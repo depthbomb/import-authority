@@ -357,14 +357,15 @@ async function applyOrganizedContent(document: vscode.TextDocument): Promise<voi
 }
 
 class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
-	public static readonly providedCodeActionKinds = [vscode.CodeActionKind.SourceOrganizeImports];
+	public static readonly kind = vscode.CodeActionKind.SourceOrganizeImports.append('importAuthority');
+	public static readonly providedCodeActionKinds = [ImportAuthorityCodeActionProvider.kind];
 
-	public provideCodeActions(document: vscode.TextDocument): vscode.CodeAction[] {
-		if (!isSupportedDocument(document)) {
+	public provideCodeActions(document: vscode.TextDocument, _range: vscode.Range, context: vscode.CodeActionContext): vscode.CodeAction[] {
+		if (!isSupportedDocument(document) || (context.only && !context.only.contains(ImportAuthorityCodeActionProvider.kind))) {
 			return [];
 		}
 
-		const action = new vscode.CodeAction('Organize Imports (Import Authority)', vscode.CodeActionKind.SourceOrganizeImports);
+		const action = new vscode.CodeAction('Organize Imports (Import Authority)', ImportAuthorityCodeActionProvider.kind);
 		action.command = {
 			command: COMMAND_ORGANIZE,
 			title: 'Organize Imports',

@@ -46,7 +46,16 @@ When you run `Organize Imports`, the extension enforces these rules by default:
 
 ## Source Organize Imports Integration
 
-The extension registers a `source.organizeImports` code action so it appears in VS Code organize-import flows.
+The extension registers `source.organizeImports.importAuthority`, which also appears in the general Organize Imports flow. To select Import Authority specifically on save, use:
+
+```json
+"editor.codeActionsOnSave": {
+  "source.organizeImports": "never",
+  "source.organizeImports.importAuthority": "explicit"
+}
+```
+
+Use `"always"` instead of `"explicit"` to include automatic saves. Other explicitly enabled organizer actions should be disabled if you want only Import Authority to organize imports.
 
 ## Supported files
 
