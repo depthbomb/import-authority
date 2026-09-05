@@ -62,3 +62,13 @@ Vue scripts with `src` or an unsupported `lang` are left unchanged. Heuristic fa
 yarn install
 yarn test
 ```
+
+Run `yarn lint` to lint `src` with Oxlint, or `yarn lint --fix` to apply available
+fixes. Tests and production builds also run linting. Install the recommended Oxc
+VS Code extension for editor diagnostics.
+
+`.oxlintrc.json` preserves the previous `curly`, `eqeqeq`, and `no-throw-literal`
+checks as errors and disables default correctness rules to keep the migration's
+rule scope unchanged. The former import naming convention and semicolon rules
+are no longer enforced because Oxlint has no built-in equivalents; see the
+[Oxlint rule reference](https://oxc.rs/docs/guide/usage/linter/rules.html).
