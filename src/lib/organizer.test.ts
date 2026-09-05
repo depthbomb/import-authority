@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { organizeImportsContent, removeUnusedImportsByScan } from './organizer';
 
+test('preserves executable code and complete comments following imports', () => {
+	for (const eol of ['\n', '\r\n']) {
+		for (const suffix of [' console.log(a);', ' /* start' + eol + 'end */' + eol + 'console.log(a);']) {
+			const input = "import { a } from 'a';" + suffix + eol;
+			for (const transform of [organizeImportsContent, removeUnusedImportsByScan]) {
+				const output = transform(input);
+				assert.ok(output.includes('console.log(a);'));
+				if (suffix.includes('/*')) {
+					assert.ok(output.includes('/* start' + eol + 'end */'));
+				}
+				assert.equal(transform(output), output);
+			}
+		}
+	}
+	assert.ok(removeUnusedImportsByScan("import { unused } from 'a'; run();").includes('run();'));
+});
+
 test('orders value imports first and type imports last by line length', () => {
 	const input = [
 		"import type { ZebraLongType } from 'zeta';",

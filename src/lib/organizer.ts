@@ -142,12 +142,10 @@ function collectLeadingComments(content: string, statement: ts.ImportDeclaration
 }
 
 function collectTrailingComment(content: string, statement: ts.ImportDeclaration): string | undefined {
-	const start = statement.getEnd();
-	const newlineIndex = content.indexOf('\n', start);
-	const lineEnd = newlineIndex === -1 ? content.length : newlineIndex;
-	const afterImport = content.slice(start, lineEnd);
-	const commentMatch = afterImport.match(/^\s*(\/\/.*|\/\*.*\*\/)\s*$/);
-	return commentMatch?.[1];
+	const ranges = ts.getTrailingCommentRanges(content, statement.getEnd()) ?? [];
+	return ranges.length > 0
+		? ranges.map(range => content.slice(range.pos, range.end)).join(' ')
+		: undefined;
 }
 
 function hasParseDiagnostics(sourceFile: ts.SourceFile): boolean {
@@ -646,8 +644,8 @@ function rebuildImportBlock(
 	const firstImportTokenStart = firstImport.getStart();
 	const lastImport            = imports[imports.length - 1];
 	const lastImportEnd = (() => {
-		const newlineIndex = content.indexOf('\n', lastImport.getEnd());
-		return newlineIndex === -1 ? content.length : newlineIndex;
+		const comments = ts.getTrailingCommentRanges(content, lastImport.getEnd()) ?? [];
+		return comments.at(-1)?.end ?? lastImport.getEnd();
 	})();
 
 	const beforeImports       = content.slice(0, firstImportStart);
