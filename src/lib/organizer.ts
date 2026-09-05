@@ -4,6 +4,8 @@ import { builtinModules } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { convertTypeOnlyImports } from './type-imports';
 import type { OffsetEdit } from './text-edit';
+import { planNamespaceImports } from './namespace-imports';
+import type { NamespaceConversionContext, NamespaceConversionResult } from './namespace-imports';
 
 export type SemicolonPolicy       = 'always' | 'never' | 'preserve';
 export type QuoteStyle            = 'single' | 'double' | 'preserve';
@@ -135,6 +137,8 @@ function getImportProtection(sourceFile: ts.SourceFile) {
 	let fileIgnored = false;
 	let hasDirectives = false;
 	let disabledDepth = 0;
+	let disabledStart = 0;
+	const disabledRanges: Array<{ start: number; end: number }> = [];
 	for (const statement of [...sourceFile.statements, sourceFile.endOfFileToken]) {
 		let pinned = false;
 		for (const range of ts.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? []) {
@@ -142,15 +146,22 @@ function getImportProtection(sourceFile: ts.SourceFile) {
 			if (!directive) { continue; }
 			hasDirectives = true;
 			if (directive === 'ignore-file') { fileIgnored = true; }
-			if (directive === 'off') { disabledDepth += 1; }
-			if (directive === 'on') { disabledDepth = Math.max(0, disabledDepth - 1); }
+			if (directive === 'off') {
+				if (disabledDepth === 0) { disabledStart = range.pos; }
+				disabledDepth += 1;
+			}
+			if (directive === 'on' && disabledDepth > 0) {
+				disabledDepth -= 1;
+				if (disabledDepth === 0) { disabledRanges.push({ start: disabledStart, end: range.end }); }
+			}
 			if (directive === 'ignore' || directive === 'pin') { pinned = true; }
 		}
 		if (ts.isImportDeclaration(statement) && (pinned || disabledDepth > 0)) {
 			protectedImports.add(statement);
 		}
 	}
-	return { protectedImports, fileIgnored, hasDirectives };
+	if (disabledDepth > 0) { disabledRanges.push({ start: disabledStart, end: sourceFile.text.length }); }
+	return { protectedImports, fileIgnored, hasDirectives, disabledRanges };
 }
 
 /** Providers cannot be trusted to preserve this extension's sorting boundaries. */
@@ -1448,6 +1459,24 @@ export type ImportFix = {
 	message: string;
 	edits: OffsetEdit[];
 };
+
+export function getNamespaceImportFixes(content: string, filePath = 'file.ts', context?: NamespaceConversionContext): NamespaceConversionResult {
+	const skip = (reason: string): NamespaceConversionResult => ({ fixes: [], skipped: [{ name: 'File', reason }] });
+	if (path.extname(filePath).toLowerCase() === '.vue') { return skip('Vue template references require the Vue language service.'); }
+	const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	const protection = getImportProtection(source);
+	if (hasParseDiagnostics(source)) { return skip('The file has syntax errors.'); }
+	if (protection.fileIgnored) { return skip('The file is ignored by Import Authority.'); }
+	const result = planNamespaceImports(source, getContiguousImportBlocks(source, protection).flat(), context);
+	result.fixes = result.fixes.filter(fix => {
+		if (fix.edits.some(edit => protection.disabledRanges.some(range => edit.start < range.end && edit.end > range.start))) {
+			result.skipped.push({ name: fix.name, reason: 'A namespace reference is inside a disabled region.' });
+			return false;
+		}
+		return true;
+	});
+	return result;
+}
 
 /** Local, read-only analysis; deliberately never invokes external removal providers. */
 export function getImportFixes(content: string, filePath = 'file.ts', options?: Partial<OrganizerOptions>): ImportFix[] {

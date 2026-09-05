@@ -38,7 +38,8 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 	};
 	const api = {
 		Uri: { from: (parts: { scheme: string; path: string }) => ({ ...parts, toString: () => `${parts.scheme}:${parts.path}` }) },
-		CodeActionKind: { SourceOrganizeImports: new Kind('source.organizeImports'), QuickFix: new Kind('quickfix') },
+		CodeActionKind: { SourceOrganizeImports: new Kind('source.organizeImports'), QuickFix: new Kind('quickfix'), RefactorRewrite: new Kind('refactor.rewrite') },
+		CodeActionTriggerKind: { Invoke: 1 },
 		DiagnosticSeverity: { Information: 2 },
 		Diagnostic: class { constructor(public range: unknown, public message: string, public severity: number) {} },
 		CodeAction: class { constructor(public title: string, public kind: Kind) {} },
@@ -47,6 +48,7 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 		TextEdit: { replace: (range: unknown, newText: string) => ({ range, newText }) },
 		WorkspaceEdit: class { edits: unknown[] = []; set(_uri: unknown, edits: unknown[]) { this.edits = edits; } },
 		window: {
+			showQuickPick: async (items: unknown[]) => items[0],
 			createOutputChannel: () => ({ ...disposable, appendLine: (line: string) => logs.push(line), show: () => { outputShown = true; } }),
 			activeTextEditor: { document },
 			showWarningMessage: (message: string) => { messages.push(message); },
@@ -99,7 +101,7 @@ function activateTestExtension(content = '', settings: Record<string, unknown> =
 
 test('registers a dedicated save action that also responds to generic organize requests', () => {
 	const { provider, metadata, commands } = activateTestExtension();
-	assert.deepEqual(metadata.providedCodeActionKinds?.map(kind => kind.value), ['source.organizeImports.importAuthority', 'quickfix']);
+	assert.deepEqual(metadata.providedCodeActionKinds?.map(kind => kind.value), ['source.organizeImports.importAuthority', 'quickfix', 'refactor.rewrite.importAuthority.namespace']);
 	const document = { uri: { scheme: 'file', fsPath: '/test.ts' }, languageId: 'typescript' } as vscode.TextDocument;
 	for (const filter of [undefined, 'source', 'source.organizeImports', 'source.organizeImports.importAuthority']) {
 		const actions = provider.provideCodeActions!(document, {} as vscode.Range, {
@@ -297,4 +299,55 @@ test('quick fixes reject an older configuration snapshot even when the document 
 		assert.equal(extension.applied.length, 0);
 		assert.match(extension.messages[0], /Request the quick fix again/);
 	} finally { extension.dispose(); }
+});
+
+test('namespace refactors resolve open dependencies, apply exact edits and reject stale requests', async () => {
+	const content = "import * as utils from './utils.js';\nconst n = utils.answer;\nutils.format(n);\n";
+	const extension = activateTestExtension(content, { 'features.enableDiagnostics': false });
+	const doc = extension.document as unknown as vscode.TextDocument;
+	let dependency = 'export const answer = 42; export function format(n: number) { return String(n); }';
+	const dependencyDoc = {
+		uri: { scheme: 'file', fsPath: '/utils.ts' }, getText: () => dependency,
+	} as unknown as vscode.TextDocument;
+	extension.documents.push(doc, dependencyDoc);
+	const actions = () => extension.provider.provideCodeActions!(doc, { start: 0, end: 40 } as unknown as vscode.Range,
+		{ only: new Kind('refactor.rewrite'), diagnostics: [] } as unknown as vscode.CodeActionContext, {} as vscode.CancellationToken) as vscode.CodeAction[];
+	try {
+		const refactor = actions()[0];
+		assert.ok(refactor, 'Offers an explicit namespace refactor with diagnostics disabled');
+		assert.equal(refactor.kind?.value, 'refactor.rewrite.importAuthority.namespace');
+		assert.equal(extension.applied.length, 0);
+		assert.equal(extension.providerCalls.length, 0);
+		await extension.commands.get(refactor.command!.command)!(...refactor.command!.arguments!);
+		let converted = content;
+		for (const edit of [...extension.applied[0].edits].sort((a, b) => b.range.start - a.range.start)) {
+			converted = converted.slice(0, edit.range.start) + edit.newText + converted.slice(edit.range.end);
+		}
+		assert.match(converted, /import \{ answer, format \}/);
+		assert.match(converted, /format\(n\)/);
+		dependency = 'export const answer = 42; export function format() { return this.answer; }';
+		await extension.commands.get(refactor.command!.command)!(...refactor.command!.arguments!);
+		assert.equal(extension.applied.length, 1, 'Rechecks changed dependency implementations');
+		extension.document.version += 1;
+		await extension.commands.get(refactor.command!.command)!(...refactor.command!.arguments!);
+		assert.equal(extension.applied.length, 1);
+		assert.match(extension.messages.at(-1)!, /document changed/);
+	} finally { extension.dispose(); }
+});
+
+test('namespace command explains rejected conversions and supports choosing between imports', async () => {
+	const content = "import * as a from './utils.js';\nimport * as b from './utils.js';\nconsole.log(a.answer, b.answer);";
+	const extension = activateTestExtension(content);
+	const doc = extension.document as unknown as vscode.TextDocument;
+	extension.documents.push(doc, {
+		uri: { scheme: 'file', fsPath: '/utils.ts' }, getText: () => 'export const answer = 42;',
+	} as unknown as vscode.TextDocument);
+	await extension.commands.get('import-authority.convertNamespaceImport')!();
+	assert.equal(extension.applied.length, 1);
+	assert.equal(extension.applied[0].edits.length, 2, 'Converts only the chosen namespace');
+	const rejected = activateTestExtension("import * as utils from './utils.js';\nconsole.log(utils);\n");
+	await rejected.commands.get('import-authority.convertNamespaceImport')!();
+	assert.equal(rejected.applied.length, 0);
+	assert.match(rejected.messages[0], /used as an object/);
+	extension.dispose(); rejected.dispose();
 });

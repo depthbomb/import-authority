@@ -5,7 +5,8 @@ import { statSync, existsSync } from 'node:fs';
 import { createMinimalOffsetEdit } from './lib/text-edit';
 import { requestUnusedImportResult } from './lib/unused-provider';
 import { describeOrganization, describeOrganizationCounts } from './lib/organization-report';
-import { getImportFixes, organizeImportsWithReport, removeUnusedImportsByScan } from './lib/organizer';
+import { getImportFixes, getNamespaceImportFixes, organizeImportsWithReport, removeUnusedImportsByScan } from './lib/organizer';
+import type { NamespaceConversionResult } from './lib/namespace-imports';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,
@@ -34,6 +35,7 @@ const COMMAND_ORGANIZE = 'import-authority.organizeImports';
 const COMMAND_PREVIEW  = 'import-authority.previewOrganizeImports';
 const COMMAND_EXPLAIN  = 'import-authority.explainImports';
 const COMMAND_APPLY_FIX = 'import-authority.applyImportFix';
+const COMMAND_CONVERT_NAMESPACE = 'import-authority.convertNamespaceImport';
 const PREVIEW_SCHEME   = 'import-authority-preview';
 const CONFIG_NAMESPACE = 'importAuthority';
 
@@ -488,9 +490,54 @@ class LiveImportDiagnostics implements vscode.Disposable {
 	}
 }
 
+function analyzeNamespaceImports(document: vscode.TextDocument): NamespaceConversionResult {
+	const configPath = document.uri.scheme === 'file' ? findNearestTsConfig(document.uri.fsPath) : null;
+	if (configPath) { readAliasPrefixesFromConfig(configPath); }
+	const openFiles = new Map(vscode.workspace.textDocuments.filter(doc => doc.uri.scheme === 'file')
+		.map(doc => [path.resolve(doc.uri.fsPath), doc.getText()]));
+	return getNamespaceImportFixes(document.getText(), getVirtualFilePath(document), {
+		compilerOptions: configPath ? aliasPrefixCache.get(configPath)?.compilerOptions : undefined,
+		readFile: filename => openFiles.get(path.resolve(filename)) ?? ts.sys.readFile(filename),
+		fileExists: filename => openFiles.has(path.resolve(filename)) || ts.sys.fileExists(filename),
+	});
+}
+
+async function convertNamespaceImport(targetUri?: vscode.Uri, expectedVersion?: number, importStart?: number, importName?: string): Promise<void> {
+	const document = targetUri ? await vscode.workspace.openTextDocument(targetUri) : vscode.window.activeTextEditor?.document;
+	if (!document || !isSupportedDocument(document)) { return; }
+	const version = document.version;
+	if (expectedVersion !== undefined && expectedVersion !== version) {
+		void vscode.window.showInformationMessage('The document changed. Request namespace conversion again.'); return;
+	}
+	const result = analyzeNamespaceImports(document);
+	let fix = importStart !== undefined ? result.fixes.find(candidate => candidate.start === importStart && candidate.name === importName)
+		: result.fixes.length === 1 ? result.fixes[0] : undefined;
+	if (!fix && importStart === undefined && result.fixes.length > 1) {
+		const selected = await vscode.window.showQuickPick(result.fixes.map(candidate => ({ label: candidate.name, description: candidate.moduleName, fix: candidate })), {
+			placeHolder: 'Choose a namespace import to convert to named imports',
+		});
+		if (!selected) { return; }
+		if (document.version !== version) { void vscode.window.showInformationMessage('The document changed. Request namespace conversion again.'); return; }
+		// Dependencies and settings may also have changed while the picker was open.
+		fix = analyzeNamespaceImports(document).fixes.find(candidate => candidate.start === selected.fix.start && candidate.name === selected.fix.name);
+	}
+	if (!fix) {
+		const reasons = [...new Set(result.skipped.map(item => `${item.name}: ${item.reason}`))];
+		void vscode.window.showInformationMessage(`No eligible namespace import found.${reasons.length ? ` ${reasons.join(' ')}` : ''}`);
+		return;
+	}
+	if (document.version !== version) { return; }
+	const edit = new vscode.WorkspaceEdit();
+	edit.set(document.uri, fix.edits.map(change => vscode.TextEdit.replace(
+		new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.newText,
+	)));
+	if (!await vscode.workspace.applyEdit(edit)) { void vscode.window.showErrorMessage('Import Authority failed to convert the namespace import.'); }
+}
+
 class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
 	public static readonly kind = vscode.CodeActionKind.SourceOrganizeImports.append('importAuthority');
-	public static readonly providedCodeActionKinds = [ImportAuthorityCodeActionProvider.kind, vscode.CodeActionKind.QuickFix];
+	public static readonly namespaceKind = vscode.CodeActionKind.RefactorRewrite.append('importAuthority.namespace');
+	public static readonly providedCodeActionKinds = [ImportAuthorityCodeActionProvider.kind, vscode.CodeActionKind.QuickFix, ImportAuthorityCodeActionProvider.namespaceKind];
 	constructor(private readonly live: LiveImportDiagnostics) {}
 
 	public provideCodeActions(document: vscode.TextDocument, _range: vscode.Range, context: vscode.CodeActionContext): vscode.CodeAction[] {
@@ -499,6 +546,17 @@ class ImportAuthorityCodeActionProvider implements vscode.CodeActionProvider {
 		}
 
 		const fixes = !context.only || context.only.contains(vscode.CodeActionKind.QuickFix) ? this.live.actions(document, _range) : [];
+		if (_range.start !== undefined && _range.end !== undefined
+			&& (context.only?.contains(ImportAuthorityCodeActionProvider.namespaceKind) || !context.only && context.triggerKind === vscode.CodeActionTriggerKind.Invoke)) {
+			const start = document.offsetAt(_range.start);
+			const end = document.offsetAt(_range.end);
+			for (const fix of analyzeNamespaceImports(document).fixes) {
+				if (fix.end < start || fix.start > end) { continue; }
+				const action = new vscode.CodeAction(`Convert ${fix.name} to named imports`, ImportAuthorityCodeActionProvider.namespaceKind);
+				action.command = { command: COMMAND_CONVERT_NAMESPACE, title: action.title, arguments: [document.uri, document.version, fix.start, fix.name] };
+				fixes.push(action);
+			}
+		}
 		if (context.only && !context.only.contains(ImportAuthorityCodeActionProvider.kind)) { return fixes; }
 		const action = new vscode.CodeAction('Organize Imports (Import Authority)', ImportAuthorityCodeActionProvider.kind);
 		action.command = {
@@ -542,6 +600,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	};
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand(COMMAND_CONVERT_NAMESPACE, convertNamespaceImport),
 		live,
 		output,
 		previewProvider,

@@ -9,6 +9,7 @@ Opinionated import organizer for JavaScript, TypeScript, and Vue in VS Code.
 - `Organize Imports`: applies rules directly to the active document.
 - `Preview Organized Imports`: opens a diff preview without modifying your file.
 - `Explain Import Organization`: analyzes the active file and opens a report in the **Import Authority** output channel without modifying the file.
+- `Convert Namespace Import to Named Imports`: converts an eligible namespace import and its member references. If several imports qualify, choose one from the picker.
 
 Manual organization reports whether imports changed and explains skipped work. Save actions and formatting write reports to the output channel without success notifications. Preview titles include counts; detailed explanations are available in the output channel.
 
@@ -71,6 +72,14 @@ When directives are present, language-service unused-import removal is skipped b
 Import Authority checks open files after a 300 ms pause in typing. Informational diagnostics identify type-only bindings, mergeable duplicate imports, and import blocks that differ from your settings. Use the lightbulb to convert a declaration's type-only bindings or organize the affected block, including merging its duplicates. Other blocks and executable code remain untouched.
 
 Diagnostics respect ignore directives and syntax errors, and support inline Vue script blocks. They use local analysis without requesting unused-import removal from another extension. Editing a document or changing settings invalidates its previous fixes. Disable `features.enableDiagnostics` to turn off these diagnostics and quick fixes.
+
+## Namespace-to-named conversion
+
+Run **Convert Namespace Import to Named Imports**, or request a refactor on a namespace import. For example, `import * as utils from './utils.js'` and `utils.format(value)` can become `import { format } from './utils.js'` and `format(value)`.
+
+This is an explicit refactor. It updates the selected import and its references, preserves comments and type-only/default bindings, and generates aliases when a new name would collide anywhere in the file, including nested scopes. Unsaved dependency documents and the nearest tsconfig/jsconfig are included in resolution.
+
+Every referenced named export must resolve. Direct function calls and tagged templates also require an available function implementation without receiver dependencies; declaration-only signatures are insufficient. Namespace object uses, computed access, writes, optional member access, default interop, JSDoc references, implicit JSX factories, and unsupported syntax are skipped. Imports or references protected by directives are preserved. Vue components are excluded because their templates require Vue-specific reference analysis. The command explains why a conversion is unavailable.
 
 ## Automatic type imports
 

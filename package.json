@@ -43,6 +43,10 @@
 	"contributes": {
 		"commands": [
 			{
+				"command": "import-authority.convertNamespaceImport",
+				"title": "Convert Namespace Import to Named Imports"
+			},
+			{
 				"command": "import-authority.organizeImports",
 				"title": "Organize Imports"
 			},
