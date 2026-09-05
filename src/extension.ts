@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { statSync, existsSync } from 'node:fs';
 import { createMinimalOffsetEdit } from './lib/text-edit';
 import { requestUnusedImportEdits } from './lib/unused-provider';
-import { organizeImportsContent, removeUnusedImportsByScan } from './lib/organizer';
+import { organizeImportsContent, removeUnusedImportsByScan, hasImportAuthorityDirectives } from './lib/organizer';
 import type {
 	QuoteStyle,
 	SemicolonPolicy,
@@ -257,6 +257,9 @@ async function removeUnusedImports(
 	useScanFallback: boolean,
 	expectedVersion: number,
 ): Promise<string | undefined> {
+	if (hasImportAuthorityDirectives(content, getVirtualFilePath(document))) {
+		return useScanFallback ? removeUnusedImportsByScan(content, getVirtualFilePath(document)) : content;
+	}
 	try {
 		const edits = await requestUnusedImportEdits(
 			document,

@@ -24,6 +24,18 @@ When you run `Organize Imports`, the extension enforces these rules by default:
 - Files with syntax errors are left unchanged to avoid destructive edits while typing.
 - Vue single-file components organize supported inline `<script>` and `<script setup>` blocks without touching templates or styles.
 
+## Ignore and pin directives
+
+Place these comments on their own lines between top-level statements:
+
+- `// import-authority-ignore-file`: leave the entire file unchanged.
+- `// import-authority-ignore` or `// import-authority-pin`: leave the immediately following import unchanged and prevent other imports from moving or merging across it.
+- `// import-authority-off` and `// import-authority-on`: leave a region unchanged. Regions can nest; an unmatched `off` protects the rest of the file.
+
+Block comments such as `/* import-authority-pin */` also work. Directive comments must contain only the directive. In Vue, put directives inside inline script blocks; regions apply within that script, while `ignore-file` disables the entire component.
+
+When directives are present, language-service unused-import removal is skipped because external providers do not understand these boundaries. If heuristic fallback removal is enabled, it can still remove unprotected imports in supported non-JSX JavaScript and TypeScript files.
+
 ## Settings
 
 - `importAuthority.sorting.placeTypeImportsLast` (`true`): place type imports after non-type imports.

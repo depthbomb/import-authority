@@ -118,6 +118,44 @@ function splitNamedSpecifiers(namedImports: ts.NamedImports): { value: string[];
 	return { value, type };
 }
 
+type ImportDirective = 'ignore-file' | 'ignore' | 'pin' | 'off' | 'on';
+
+function parseImportDirective(comment: string): ImportDirective | undefined {
+	return /^(?:\/\/\s*|\/\*\s*)import-authority-(ignore-file|ignore|pin|off|on)\s*(?:\*\/)?$/.exec(comment)?.[1] as ImportDirective | undefined;
+}
+
+function getImportProtection(sourceFile: ts.SourceFile) {
+	const protectedImports = new Set<ts.ImportDeclaration>();
+	let fileIgnored = false;
+	let hasDirectives = false;
+	let disabledDepth = 0;
+	for (const statement of [...sourceFile.statements, sourceFile.endOfFileToken]) {
+		let pinned = false;
+		for (const range of ts.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? []) {
+			const directive = parseImportDirective(sourceFile.text.slice(range.pos, range.end));
+			if (!directive) { continue; }
+			hasDirectives = true;
+			if (directive === 'ignore-file') { fileIgnored = true; }
+			if (directive === 'off') { disabledDepth += 1; }
+			if (directive === 'on') { disabledDepth = Math.max(0, disabledDepth - 1); }
+			if (directive === 'ignore' || directive === 'pin') { pinned = true; }
+		}
+		if (ts.isImportDeclaration(statement) && (pinned || disabledDepth > 0)) {
+			protectedImports.add(statement);
+		}
+	}
+	return { protectedImports, fileIgnored, hasDirectives };
+}
+
+/** Providers cannot be trusted to preserve this extension's sorting boundaries. */
+export function hasImportAuthorityDirectives(content: string, filePath = 'file.ts'): boolean {
+	if (path.extname(filePath).toLowerCase() === '.vue') {
+		return (findVueScriptBlocks(content, filePath) ?? []).some(block =>
+			hasImportAuthorityDirectives(content.slice(block.contentStart, block.contentEnd), block.filePath));
+	}
+	return getImportProtection(ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath))).hasDirectives;
+}
+
 function collectMovableLeadingCommentRanges(content: string, statement: ts.ImportDeclaration): ts.CommentRange[] {
 	const ranges = ts.getLeadingCommentRanges(content, statement.getFullStart()) ?? [];
 	if (ranges.length === 0) {
@@ -139,6 +177,12 @@ function collectMovableLeadingCommentRanges(content: string, statement: ts.Impor
 	}
 
 	const attached = contiguous.reverse();
+	for (let index = attached.length - 1; index >= 0; index -= 1) {
+		const range = attached[index];
+		if (parseImportDirective(content.slice(range.pos, range.end))) {
+			return attached.slice(index + 1);
+		}
+	}
 	if (statement === (statement.parent as ts.SourceFile).statements[0]) {
 		for (let index = attached.length - 1; index >= 0; index -= 1) {
 			const range = attached[index];
@@ -344,11 +388,13 @@ function toImportRecords(
 
 function getContiguousImportBlocks(sourceFile: ts.SourceFile): Array<ts.ImportDeclaration[]> {
 	const blocks = [] as Array<ts.ImportDeclaration[]>;
+	const protection = getImportProtection(sourceFile);
+	if (protection.fileIgnored) { return blocks; }
 
 	let current = [] as ts.ImportDeclaration[];
 
 	for (const statement of sourceFile.statements) {
-		if (ts.isImportDeclaration(statement)) {
+		if (ts.isImportDeclaration(statement) && !protection.protectedImports.has(statement)) {
 			const leading = ts.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? [];
 			if (current.length > 0 && leading.length > collectMovableLeadingCommentRanges(sourceFile.text, statement).length) {
 				blocks.push(current);
@@ -1409,6 +1455,11 @@ export function organizeImportsContent(
 
 	const scriptBlocks = findVueScriptBlocks(content, filePath);
 	if (!scriptBlocks) {
+		return content;
+	}
+	if (scriptBlocks.some(block => getImportProtection(ts.createSourceFile(
+		block.filePath, content.slice(block.contentStart, block.contentEnd), ts.ScriptTarget.Latest, true, getScriptKind(block.filePath),
+	)).fileIgnored)) {
 		return content;
 	}
 	let nextContent = content;
