@@ -32,6 +32,7 @@ exports.run = async () => {
 	const source = "import { Zebra } from 'zebra';\nimport { A } from 'a';\nlet value: A;\nconsole.log(Zebra);\n";
 	const open = async (name, text) => {
 		const filename = path.join(workspace, name);
+		fs.mkdirSync(path.dirname(filename), { recursive: true });
 		fs.writeFileSync(filename, text);
 		const document = await vscode.workspace.openTextDocument(filename);
 		await vscode.window.showTextDocument(document);
@@ -114,5 +115,52 @@ exports.run = async () => {
 	await vscode.commands.executeCommand('import-authority.organizeImports');
 	results.untitled = untitled.getText();
 	assert.notEqual(results.untitled, source);
+
+	console.log('Host: monorepo aliases, inherited JSX config and live config changes');
+	const baseConfig = path.join(workspace, 'tsconfig.base.json');
+	const config = factory => JSON.stringify({ compilerOptions: { module: 'ESNext', moduleResolution: 'Bundler', baseUrl: '.', paths: { '@shared/*': ['packages/shared/src/*'] }, jsxFactory: factory, jsxFragmentFactory: 'Fragment' } });
+	fs.writeFileSync(baseConfig, config('h'));
+	await open('packages/shared/src/math.ts', 'export const answer = 42; export const increment = (n: number) => n + 1;');
+	await open('packages/app/tsconfig.json', '{"extends":"../../tsconfig.base.json","compilerOptions":{"strict":true}}');
+	const aliased = await open('packages/app/alias.ts', "import * as math from '@shared/math';\nconsole.log(math.increment(math.answer));\n");
+	await vscode.commands.executeCommand('import-authority.convertNamespaceImport', aliased.uri);
+	assert.doesNotMatch(aliased.getText(), /import \* as/);
+	results.monorepoAlias = aliased.getText();
+	const renderSource = "import { h } from 'renderer';\nimport { LongerName } from '@shared/types';\nlet factory: typeof h;\nconst view = <div />;\n";
+	const render = await open('packages/app/render.tsx', renderSource);
+	const formatted = async doc => {
+		const edits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', doc.uri, { tabSize: 4, insertSpaces: false });
+		let text = doc.getText();
+		for (const edit of edits.sort((a, b) => doc.offsetAt(b.range.start) - doc.offsetAt(a.range.start))) {
+			text = text.slice(0, doc.offsetAt(edit.range.start)) + edit.newText + text.slice(doc.offsetAt(edit.range.end));
+		}
+		return text;
+	};
+	results.inheritedFactory = await formatted(render);
+	assert.doesNotMatch(results.inheritedFactory, /import type \{ h \}/);
+	fs.writeFileSync(baseConfig, config('differentFactory'));
+	results.changedFactory = await eventually(async () => {
+		const text = await formatted(render);
+		return /import type \{ h \}/.test(text) ? text : undefined;
+	}, 'changed inherited config invalidates cached options');
+	fs.writeFileSync(baseConfig, config('h'));
+	await eventually(async () => !/import type \{ h \}/.test(await formatted(render)), 'restored JSX factory');
+
+	console.log('Host: repeated TSX edits, save actions and undo');
+	const tsxSource = "/** @jsx React.createElement */\nimport * as React from 'react';\nimport { Button, ButtonProps } from '@shared/ui';\nexport const View = (props: ButtonProps) => <Button {...props} />;\n";
+	const view = await open('packages/app/view.tsx', tsxSource);
+	results.tsxSaves = [];
+	for (let iteration = 0; iteration < 12; iteration++) {
+		await replace(view, tsxSource + `// edit ${iteration}\n`);
+		assert.equal(await view.save(), true);
+		assert.match(view.getText(), /import type \{ ButtonProps \}/);
+		assert.match(view.getText(), /import \* as React/);
+		assert.equal(fs.readFileSync(view.uri.fsPath, 'utf8'), view.getText());
+		results.tsxSaves.push(view.getText());
+	}
+
+	await vscode.workspace.getConfiguration('importAuthority', view).update('features.enableDiagnostics', false, vscode.ConfigurationTarget.Workspace);
+	await eventually(() => diagnostics(view).length === 0, 'diagnostics disabled after setting change');
+	results.disabledDiagnostics = diagnostics(view);
 	fs.writeFileSync(process.env.IMPORT_AUTHORITY_HOST_RESULTS, JSON.stringify(results, null, 2));
 };

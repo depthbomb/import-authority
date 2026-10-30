@@ -34,6 +34,10 @@ async function main() {
 			launchArgs: [workspace, '--user-data-dir', path.join(extension, 'profile'), '--extensions-dir', path.join(extension, 'extensions'), '--disable-extensions', '--disable-extension=vscode.typescript-language-features', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-gpu', '--no-sandbox'],
 		});
 		results.push(JSON.parse(fs.readFileSync(resultFile, 'utf8')));
+		if (process.env.IMPORT_AUTHORITY_REPORT_DIR) {
+			fs.mkdirSync(process.env.IMPORT_AUTHORITY_REPORT_DIR, { recursive: true });
+			fs.copyFileSync(resultFile, path.join(process.env.IMPORT_AUTHORITY_REPORT_DIR, `host-${results.at(-1).version}-${variant}.json`));
+		}
 	}
 	assert.deepEqual(results[1], results[0], 'Real extension-host behavior differs from the frozen release.');
 	console.log(JSON.stringify({ baseline: revision, version: results[0].version, cases: Object.keys(results[0]).length - 1, results: temporary }));
