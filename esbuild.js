@@ -1,6 +1,4 @@
 const esbuild = require("esbuild");
-const fs      = require('node:fs/promises');
-const path    = require('node:path');
 
 const production = process.argv.includes('--production');
 const watch      = process.argv.includes('--watch');
@@ -18,7 +16,9 @@ const esbuildProblemMatcherPlugin = {
 		build.onEnd((result) => {
 			result.errors.forEach(({ text, location }) => {
 				console.error(`✘ [ERROR] ${text}`);
-				console.error(`    ${location.file}:${location.line}:${location.column}:`);
+				if (location) {
+					console.error(`    ${location.file}:${location.line}:${location.column}:`);
+				}
 			});
 			console.log('[watch] build finished');
 		});
@@ -26,20 +26,12 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-	const typescriptDirectory = path.dirname(require.resolve('typescript/package.json'));
-	const notices = await Promise.all(['LICENSE.txt', 'ThirdPartyNoticeText.txt'].map(filename => {
-		return fs.readFile(path.join(typescriptDirectory, filename), 'utf8');
-	}));
-	await fs.mkdir('dist', {
-		recursive: true
-	});
-	await fs.writeFile('dist/THIRD_PARTY_NOTICES.txt', `This extension bundles TypeScript (https://github.com/microsoft/TypeScript).\n\n${notices.join('\n\n')}`);
-
 	const ctx = await esbuild.context({
 		entryPoints:    [
 			'src/extension.ts'
 		],
 		bundle:         true,
+		metafile:       true,
 		format:         'cjs',
 		minify:         production,
 		sourcemap:      !production,
@@ -49,7 +41,28 @@ async function main() {
 		external:       ['vscode'],
 		logLevel:       'silent',
 		plugins:        [
-			// add to the end of plugins array
+			{
+				name: 'standalone-runtime',
+				setup(build) {
+					build.onResolve({
+						filter: /^(?:typescript|typescript\/.*)$/
+					}, args => ({
+						errors: [{
+							text: `TypeScript is a development dependency and cannot be bundled: ${args.path}`
+						}],
+					}));
+					build.onEnd(result => {
+						const dependencies = Object.keys(result.metafile?.inputs ?? {}).filter(file => /(?:^|\/)node_modules\//.test(file));
+						if (dependencies.length) {
+							return {
+								errors: [{
+									text: `The extension runtime must remain dependency-free: ${dependencies.join(', ')}`
+								}]
+							};
+						}
+					});
+				},
+			},
 			esbuildProblemMatcherPlugin,
 		],
 	});

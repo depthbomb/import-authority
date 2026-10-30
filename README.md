@@ -115,7 +115,7 @@ let value: Model;
 run();
 ```
 
-Conversion uses TypeScript's local symbol binding to distinguish imported names from shadowed variables. It handles default and namespace imports, aliases, type queries, and explicit type exports. Bindings with runtime references or no references remain value imports. Mixed imports follow `style.typeImportStyle`; standalone type imports use erased declarations. Reports include the number of bindings converted.
+Conversion uses the extension's local scope and reference analysis to distinguish imported names from shadowed variables. It handles default and namespace imports, aliases, type queries, and explicit type exports. Bindings with runtime references or no references remain value imports. Mixed imports follow `style.typeImportStyle`; standalone type imports use erased declarations. Reports include the number of bindings converted.
 
 Ignore and pin directives also protect imports from conversion. JavaScript and Vue files, files containing decorators or direct `eval` calls, and imports containing internal comments, attributes, or deferred imports are left unconverted. JSX factory bindings from the nearest tsconfig/jsconfig and leading `@jsx`/`@jsxFrag` comments are preserved. Vue, decorator, and eval skips appear in reports.
 
@@ -146,6 +146,8 @@ Vue scripts with `src` or an unsupported `lang` are left unchanged. Heuristic fa
 
 Use Node.js 24 and the repository's pinned Yarn version.
 
+The extension uses its own scanner, syntax analyzer, JSONC config reader, and module resolver. TypeScript is a development dependency for compilation and compatibility tests; it is neither bundled nor loaded by the extension. The build rejects runtime dependencies. Syntax and module-resolution tests compare behavior with TypeScript 6.0, including shadowing, JSX, config inheritance, conditional exports, and package declaration versions. Update those compatibility tests when adding support for new language syntax.
+
 ```sh
 yarn install
 yarn test
@@ -168,3 +170,7 @@ are no longer enforced because Oxlint has no built-in equivalents; see the
 Heuristic unused-import removal also skips files containing JSX because JSX factories and fragment bindings may be supplied implicitly by compiler or build configuration.
 
 Run `yarn package:vsix` to validate and build an installable extension package.
+
+Run `node --import tsx benchmarks/organizer.cjs <baseline-commit>` to compare organizer output and timings against a complete source snapshot of an earlier revision.
+
+After `yarn package`, run `node benchmarks/startup.cjs <baseline-commit>` to compare bundle loading, activation, and the first organize command in fresh Node processes. This uses the integration tests' VS Code API mock; it does not measure a running VS Code extension host.

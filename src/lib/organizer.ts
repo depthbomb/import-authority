@@ -1,4 +1,4 @@
-import ts from 'typescript';
+import * as syntax from './syntax';
 import path from 'node:path';
 import { builtinModules } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -221,26 +221,7 @@ function detectEol(content: string): string {
 	return content.includes('\r\n') ? '\r\n' : '\n';
 }
 
-function getScriptKind(filePath: string): ts.ScriptKind {
-	switch (path.extname(filePath).toLowerCase()) {
-		case '.js':
-		case '.mjs':
-		case '.cjs':
-			return ts.ScriptKind.JS;
-		case '.jsx':
-			return ts.ScriptKind.JSX;
-		case '.mts':
-		case '.cts':
-		case '.ts':
-			return ts.ScriptKind.TS;
-		case '.tsx':
-			return ts.ScriptKind.TSX;
-		default:
-			return ts.ScriptKind.TS;
-	}
-}
-
-function splitNamedSpecifiers(namedImports: ts.NamedImports): { value: string[]; type: string[] } {
+function splitNamedSpecifiers(namedImports: syntax.NamedImports): { value: string[]; type: string[] } {
 	const value = [] as string[];
 	const type  = [] as string[];
 
@@ -266,8 +247,8 @@ function parseImportDirective(comment: string): ImportDirective | undefined {
 	return /^(?:\/\/\s*|\/\*\s*)import-authority-(ignore-file|ignore|pin|off|on)\s*(?:\*\/)?$/.exec(comment)?.[1] as ImportDirective | undefined;
 }
 
-function getImportProtection(sourceFile: ts.SourceFile) {
-	const protectedImports = new Set<ts.ImportDeclaration>();
+function getImportProtection(sourceFile: syntax.SourceFile) {
+	const protectedImports = new Set<syntax.ImportDeclaration>();
 	let fileIgnored        = false;
 	let hasDirectives      = false;
 	let disabledDepth      = 0;
@@ -277,7 +258,7 @@ function getImportProtection(sourceFile: ts.SourceFile) {
 	for (const statement of [...sourceFile.statements, sourceFile.endOfFileToken]) {
 		let pinned = false;
 
-		for (const range of ts.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? []) {
+		for (const range of syntax.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? []) {
 			const directive = parseImportDirective(sourceFile.text.slice(range.pos, range.end));
 			if (!directive) {
 				continue;
@@ -313,7 +294,7 @@ function getImportProtection(sourceFile: ts.SourceFile) {
 			}
 		}
 
-		if (ts.isImportDeclaration(statement) && (pinned || disabledDepth > 0)) {
+		if (syntax.isImportDeclaration(statement) && (pinned || disabledDepth > 0)) {
 			protectedImports.add(statement);
 		}
 	}
@@ -333,13 +314,13 @@ function getImportProtection(sourceFile: ts.SourceFile) {
 	};
 }
 
-function collectMovableLeadingCommentRanges(content: string, statement: ts.ImportDeclaration): ts.CommentRange[] {
-	const ranges = ts.getLeadingCommentRanges(content, statement.getFullStart()) ?? [];
+function collectMovableLeadingCommentRanges(content: string, statement: syntax.ImportDeclaration): syntax.CommentRange[] {
+	const ranges = syntax.getLeadingCommentRanges(content, statement.getFullStart()) ?? [];
 	if (ranges.length === 0) {
 		return [];
 	}
 
-	const contiguous = [] as ts.CommentRange[];
+	const contiguous = [] as syntax.CommentRange[];
 	let nextStart    = statement.getStart();
 
 	for (let index = ranges.length - 1; index >= 0; index--) {
@@ -362,7 +343,7 @@ function collectMovableLeadingCommentRanges(content: string, statement: ts.Impor
 		}
 	}
 
-	if (statement === (statement.parent as ts.SourceFile).statements[0]) {
+	if (statement === (statement.parent as syntax.SourceFile).statements[0]) {
 		for (let index = attached.length - 1; index >= 0; index -= 1) {
 			const range = attached[index];
 			if (isTypeScriptDirective(content.slice(range.pos, range.end))) {
@@ -374,23 +355,21 @@ function collectMovableLeadingCommentRanges(content: string, statement: ts.Impor
 	return attached;
 }
 
-function collectLeadingComments(content: string, statement: ts.ImportDeclaration): string[] {
+function collectLeadingComments(content: string, statement: syntax.ImportDeclaration): string[] {
 	return collectMovableLeadingCommentRanges(content, statement)
 		.map(range => content.slice(range.pos, range.end).trimEnd());
 }
 
-function collectTrailingComment(content: string, statement: ts.ImportDeclaration): string | undefined {
-	const ranges = ts.getTrailingCommentRanges(content, statement.getEnd()) ?? [];
+function collectTrailingComment(content: string, statement: syntax.ImportDeclaration): string | undefined {
+	const ranges = syntax.getTrailingCommentRanges(content, statement.getEnd()) ?? [];
 
 	return ranges.length > 0
 		? ranges.map(range => content.slice(range.pos, range.end)).join(' ')
 		: undefined;
 }
 
-function hasParseDiagnostics(sourceFile: ts.SourceFile): boolean {
-	const parsed = sourceFile as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] };
-
-	return (parsed.parseDiagnostics?.length ?? 0) > 0;
+function hasParseDiagnostics(sourceFile: syntax.SourceFile): boolean {
+	return sourceFile.parseDiagnostics.length > 0;
 }
 
 function isTypeScriptDirective(comment: string): boolean {
@@ -400,31 +379,19 @@ function isTypeScriptDirective(comment: string): boolean {
 }
 
 function hasCommentTrivia(text: string): boolean {
-	const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, text);
-
-	for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-		if (token === ts.SyntaxKind.SingleLineCommentTrivia || token === ts.SyntaxKind.MultiLineCommentTrivia) {
-			return true;
-		}
-	}
-
-	return false;
+	return syntax.hasCommentTrivia(text);
 }
 
 function toImportRecords(
-	sourceFile: ts.SourceFile,
+	sourceFile: syntax.SourceFile,
 	content: string,
-	imports = sourceFile.statements.filter(ts.isImportDeclaration),
+	imports = sourceFile.statements.filter(syntax.isImportDeclaration),
 	inlineTypes = false,
-): { records: ImportRecord[]; imports: ts.ImportDeclaration[] } {
+): { records: ImportRecord[]; imports: syntax.ImportDeclaration[] } {
 	const records = [] as ImportRecord[];
 
 	for (let sourceOrder = 0; sourceOrder < imports.length; sourceOrder += 1) {
 		const statement = imports[sourceOrder];
-		if (!ts.isStringLiteral(statement.moduleSpecifier)) {
-			continue;
-		}
-
 		const moduleName          = statement.moduleSpecifier.text;
 		const moduleLiteral       = statement.moduleSpecifier.getText(sourceFile);
 		const quote               = (moduleLiteral.startsWith('"') ? '"' : "'") as '"' | "'";
@@ -436,7 +403,7 @@ function toImportRecords(
 		const trailingComment = collectTrailingComment(content, statement);
 		const attributesText  = statement.attributes?.getText(sourceFile);
 		const rawText = hasCommentTrivia(statement.getText(sourceFile))
-			|| statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword
+			|| statement.importClause?.phaseModifier === 'defer'
 			? statement.getText(sourceFile)
 			: undefined;
 
@@ -464,11 +431,11 @@ function toImportRecords(
 		let valueNamedImports = [] as string[];
 		let typeNamedImports  = [] as string[];
 
-		if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+		if (clause.namedBindings && syntax.isNamespaceImport(clause.namedBindings)) {
 			namespaceImport = clause.namedBindings.name.text;
 		}
 
-		if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+		if (clause.namedBindings && syntax.isNamedImports(clause.namedBindings)) {
 			const split       = splitNamedSpecifiers(clause.namedBindings);
 			valueNamedImports = split.value;
 			typeNamedImports  = split.type;
@@ -494,7 +461,7 @@ function toImportRecords(
 				hadSemicolon,
 				isSideEffect:            false,
 				preserveEvaluationOrder: preservesRuntimeSideEffects,
-				hasNamedImportsClause:   !!(clause.namedBindings && ts.isNamedImports(clause.namedBindings)),
+				hasNamedImportsClause:   !!(clause.namedBindings && syntax.isNamedImports(clause.namedBindings)),
 				rawText:                 rawText ?? statement.getText(sourceFile),
 			});
 			continue;
@@ -520,13 +487,13 @@ function toImportRecords(
 				hadSemicolon,
 				isSideEffect:            false,
 				preserveEvaluationOrder: false,
-				hasNamedImportsClause:   !!(clause.namedBindings && ts.isNamedImports(clause.namedBindings)),
+				hasNamedImportsClause:   !!(clause.namedBindings && syntax.isNamedImports(clause.namedBindings)),
 				rawText,
 			});
 			continue;
 		}
 
-		if (defaultImport || namespaceImport || valueNamedImports.length > 0 || (clause.namedBindings && ts.isNamedImports(clause.namedBindings))) {
+		if (defaultImport || namespaceImport || valueNamedImports.length > 0 || (clause.namedBindings && syntax.isNamedImports(clause.namedBindings))) {
 			records.push({
 				sourceOrder,
 				moduleName,
@@ -540,9 +507,9 @@ function toImportRecords(
 				trailingComment,
 				hadSemicolon,
 				isSideEffect:            false,
-				preserveEvaluationOrder: !!(clause.namedBindings && ts.isNamedImports(clause.namedBindings)
+				preserveEvaluationOrder: !!(clause.namedBindings && syntax.isNamedImports(clause.namedBindings)
 					&& clause.namedBindings.elements.length === 0),
-				hasNamedImportsClause:   !!(clause.namedBindings && ts.isNamedImports(clause.namedBindings)),
+				hasNamedImportsClause:   !!(clause.namedBindings && syntax.isNamedImports(clause.namedBindings)),
 				rawText,
 			});
 		}
@@ -572,18 +539,18 @@ function toImportRecords(
 	};
 }
 
-function getContiguousImportBlocks(sourceFile: ts.SourceFile, protection = getImportProtection(sourceFile)): Array<ts.ImportDeclaration[]> {
-	const blocks = [] as Array<ts.ImportDeclaration[]>;
+function getContiguousImportBlocks(sourceFile: syntax.SourceFile, protection = getImportProtection(sourceFile)): Array<syntax.ImportDeclaration[]> {
+	const blocks = [] as Array<syntax.ImportDeclaration[]>;
 
 	if (protection.fileIgnored) {
 		return blocks;
 	}
 
-	let current = [] as ts.ImportDeclaration[];
+	let current = [] as syntax.ImportDeclaration[];
 
 	for (const statement of sourceFile.statements) {
-		if (ts.isImportDeclaration(statement) && !protection.protectedImports.has(statement)) {
-			const leading = ts.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? [];
+		if (syntax.isImportDeclaration(statement) && !protection.protectedImports.has(statement)) {
+			const leading = syntax.getLeadingCommentRanges(sourceFile.text, statement.getFullStart()) ?? [];
 			if (current.length > 0 && leading.length > collectMovableLeadingCommentRanges(sourceFile.text, statement).length) {
 				blocks.push(current);
 				current = [];
@@ -908,14 +875,14 @@ function withDefaults(options?: Partial<OrganizerOptions>): OrganizerOptions {
 
 function createImportBlockEdit(
 	content: string,
-	imports: ts.ImportDeclaration[],
+	imports: syntax.ImportDeclaration[],
 	organizedImports: string,
 	eol: string,
 ): ImportBlockEdit {
 	const firstImport = imports[0];
 	const start       = collectMovableLeadingCommentRanges(content, firstImport)[0]?.pos ?? firstImport.getStart();
 	const lastImport  = imports[imports.length - 1];
-	const comments    = ts.getTrailingCommentRanges(content, lastImport.getEnd()) ?? [];
+	const comments    = syntax.getTrailingCommentRanges(content, lastImport.getEnd()) ?? [];
 	let end           = comments.at(-1)?.end ?? lastImport.getEnd();
 
 	for (let cursor = end; cursor < content.length && /\s/.test(content[cursor]); cursor += 1) {
@@ -1039,26 +1006,18 @@ function prepareImports(records: ImportRecord[], options: OrganizerOptions, eol:
 }
 
 function findFromKeyword(text: string): number {
-	const scanner     = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
-	let depth         = 0;
-	let previousKind  = ts.SyntaxKind.Unknown;
+	const scanner = new syntax.Scanner(text);
+	let depth = 0;
+	let previous = '';
 	let previousStart = -1;
-
-	for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-		if (token === ts.SyntaxKind.StringLiteral && depth === 0) {
-			return previousKind === ts.SyntaxKind.FromKeyword ? previousStart : -1;
+	for (let token = scanner.next(); token.kind !== 'eof'; token = scanner.next()) {
+		if (token.kind === 'string' && depth === 0) {
+			return previous === 'from' ? previousStart : -1;
 		}
 
-		if (token === ts.SyntaxKind.OpenBraceToken) {
-			depth += 1;
-		}
-
-		if (token === ts.SyntaxKind.CloseBraceToken) {
-			depth -= 1;
-		}
-
-		previousKind  = token;
-		previousStart = scanner.getTokenPos();
+		depth += Number(token.text === '{') - Number(token.text === '}');
+		previous = token.text;
+		previousStart = token.start;
 	}
 
 	return -1;
@@ -1168,71 +1127,10 @@ function joinImports(prepared: PreparedImport[], eol: string, grouped: boolean):
 	return blocks.join(`${eol}${eol}`);
 }
 
-function collectUsedIdentifiers(sourceFile: ts.SourceFile, content: string): Set<string> {
-	const used = new Set<string>();
-	const isReference = (node: ts.Identifier): boolean => {
-		const parent = node.parent;
-		if (
-			(ts.isPropertyAccessExpression(parent) && parent.name === node)
-			|| (ts.isQualifiedName(parent) && parent.right === node)
-			|| (ts.isPropertyAssignment(parent) && parent.name === node)
-			|| (ts.isMethodDeclaration(parent) && parent.name === node)
-			|| (ts.isPropertyDeclaration(parent) && parent.name === node)
-			|| (ts.isPropertySignature(parent) && parent.name === node)
-			|| (ts.isMethodSignature(parent) && parent.name === node)
-			|| (ts.isGetAccessorDeclaration(parent) && parent.name === node)
-			|| (ts.isSetAccessorDeclaration(parent) && parent.name === node)
-			|| (ts.isEnumMember(parent) && parent.name === node)
-			|| (ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node))
-			|| (ts.isLabeledStatement(parent) && parent.label === node)
-			|| (ts.isBreakOrContinueStatement(parent) && parent.label === node)
-			|| (ts.isJsxAttribute(parent) && parent.name === node)
-		) {
-			return false;
-		}
-
-		if (
-			(ts.isVariableDeclaration(parent)
-				|| ts.isParameter(parent)
-				|| ts.isFunctionDeclaration(parent)
-				|| ts.isFunctionExpression(parent)
-				|| ts.isClassDeclaration(parent)
-				|| ts.isClassExpression(parent)
-				|| ts.isInterfaceDeclaration(parent)
-				|| ts.isTypeAliasDeclaration(parent)
-				|| ts.isEnumDeclaration(parent)
-				|| ts.isModuleDeclaration(parent)
-				|| ts.isTypeParameterDeclaration(parent))
-			&& parent.name === node
-		) {
-			return false;
-		}
-
-		return true;
-	};
-
-	const visit = (node: ts.Node): void => {
-		if (ts.isImportDeclaration(node)) {
-			return;
-		}
-
-		if (ts.isIdentifier(node) && isReference(node)) {
-			used.add(node.text);
-		}
-
-		ts.forEachChild(node, visit);
-	};
-
-	visit(sourceFile);
-
-	const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, content);
-
-	for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-		if (token !== ts.SyntaxKind.MultiLineCommentTrivia) {
-			continue;
-		}
-
-		const comment = scanner.getTokenText();
+function collectUsedIdentifiers(sourceFile: syntax.SourceFile, content: string): Set<string> {
+	const used = new Set(sourceFile.references.map(reference => reference.name));
+	for (const range of sourceFile.comments) {
+		const comment = content.slice(range.pos, range.end);
 		if (!comment.startsWith('/**')) {
 			continue;
 		}
@@ -1245,7 +1143,7 @@ function collectUsedIdentifiers(sourceFile: ts.SourceFile, content: string): Set
 	return used;
 }
 
-function formatImportSpecifier(element: ts.ImportSpecifier, sourceFile: ts.SourceFile): string {
+function formatImportSpecifier(element: syntax.ImportSpecifier, sourceFile: syntax.SourceFile): string {
 	const base = element.propertyName
 		? `${element.propertyName.getText(sourceFile)} as ${element.name.text}`
 		: element.name.text;
@@ -1254,8 +1152,8 @@ function formatImportSpecifier(element: ts.ImportSpecifier, sourceFile: ts.Sourc
 }
 
 function pruneUnusedFromImport(
-	statement: ts.ImportDeclaration,
-	sourceFile: ts.SourceFile,
+	statement: syntax.ImportDeclaration,
+	sourceFile: syntax.SourceFile,
 	usedIdentifiers: Set<string>,
 ): string | null {
 	const clause        = statement.importClause;
@@ -1265,26 +1163,26 @@ function pruneUnusedFromImport(
 		return statementText;
 	}
 
-	if (hasCommentTrivia(statementText) || clause.phaseModifier === ts.SyntaxKind.DeferKeyword) {
+	if (hasCommentTrivia(statementText) || clause.phaseModifier === 'defer') {
 		return statementText;
 	}
 
 	const keepDefaultImport   = clause.name ? usedIdentifiers.has(clause.name.text) : false;
 	const namedBindings       = clause.namedBindings;
-	const keepNamespaceImport = !!(namedBindings && ts.isNamespaceImport(namedBindings) && usedIdentifiers.has(namedBindings.name.text));
-	const keptNamedImports = namedBindings && ts.isNamedImports(namedBindings)
+	const keepNamespaceImport = !!(namedBindings && syntax.isNamespaceImport(namedBindings) && usedIdentifiers.has(namedBindings.name.text));
+	const keptNamedImports = namedBindings && syntax.isNamedImports(namedBindings)
 		? namedBindings.elements.filter(element => usedIdentifiers.has(element.name.text))
 		: [];
 	const isInlineTypeOnlyRuntimeImport = !clause.isTypeOnly
 		&& !clause.name
-		&& !!(namedBindings && ts.isNamedImports(namedBindings))
+		&& !!(namedBindings && syntax.isNamedImports(namedBindings))
 		&& namedBindings.elements.length > 0
 		&& namedBindings.elements.every(element => element.isTypeOnly);
 	if (isInlineTypeOnlyRuntimeImport) {
 		return statementText;
 	}
 
-	const isEmptyValueImport = !!(namedBindings && ts.isNamedImports(namedBindings)
+	const isEmptyValueImport = !!(namedBindings && syntax.isNamedImports(namedBindings)
 		&& namedBindings.elements.length === 0 && !clause.isTypeOnly);
 	if (!keepDefaultImport && !keepNamespaceImport && keptNamedImports.length === 0 && !isEmptyValueImport) {
 		return null;
@@ -1296,7 +1194,7 @@ function pruneUnusedFromImport(
 		parts.push(clause.name.text);
 	}
 
-	if (keepNamespaceImport && namedBindings && ts.isNamespaceImport(namedBindings)) {
+	if (keepNamespaceImport && namedBindings && syntax.isNamespaceImport(namedBindings)) {
 		parts.push(`* as ${namedBindings.name.text}`);
 	}
 
@@ -1551,7 +1449,7 @@ function findVueScriptBlocks(content: string, filePath: string, onUnsupported?: 
 	return blocks;
 }
 
-function prepareImportBlock(source: ts.SourceFile, content: string, block: ts.ImportDeclaration[], options: OrganizerOptions, eol: string, report?: OrganizationReport) {
+function prepareImportBlock(source: syntax.SourceFile, content: string, block: syntax.ImportDeclaration[], options: OrganizerOptions, eol: string, report?: OrganizationReport) {
 	const { records }   = toImportRecords(source, content, block, options.typeImportStyle === 'inline');
 	const baseRecords   = mergeRecords(records, options.duplicateImportPolicy);
 	let prepared        = prepareImports(baseRecords, options, eol);
@@ -1574,7 +1472,7 @@ function prepareImportBlock(source: ts.SourceFile, content: string, block: ts.Im
 
 function organizeScriptContent(content: string, filePath: string, options?: Partial<OrganizerOptions>, report?: OrganizationReport, scope = ''): string {
 	const resolvedOptions = withDefaults(options);
-	let sourceFile        = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	let sourceFile        = syntax.parseSource(filePath, content);
 	let protection        = getImportProtection(sourceFile);
 	if (resolvedOptions.convertTypeOnlyImports && !protection.fileIgnored && !hasParseDiagnostics(sourceFile)) {
 		const conversion = convertTypeOnlyImports(sourceFile, getContiguousImportBlocks(sourceFile, protection).flat(), resolvedOptions, resolvedOptions.typeImportStyle === 'inline');
@@ -1589,7 +1487,7 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 
 		if (conversion.content !== content) {
 			content    = conversion.content;
-			sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+			sourceFile = syntax.parseSource(filePath, content);
 			protection = getImportProtection(sourceFile);
 		}
 	}
@@ -1597,20 +1495,17 @@ function organizeScriptContent(content: string, filePath: string, options?: Part
 	if (report) {
 		report.hasDirectives ||= protection.hasDirectives;
 
-		const visit = (node: ts.Node): boolean => ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)
-			|| ts.isJsxFragment(node) || !!ts.forEachChild(node, visit);
-		report.hasJsx ||= visit(sourceFile);
+		report.hasJsx ||= sourceFile.hasJsx;
 
-		for (const statement of sourceFile.statements.filter(ts.isImportDeclaration)) {
+		for (const statement of sourceFile.statements.filter(syntax.isImportDeclaration)) {
 			report.importCount += 1;
 
 			const clause = statement.importClause;
 			const names  = clause?.namedBindings;
-			const namedBindings = names ? ts.isNamespaceImport(names)
+			const namedBindings = names ? syntax.isNamespaceImport(names)
 				? [names.name.text] : names.elements.map(element => element.name.text) : [];
 			const bindings = [clause?.name?.text, ...namedBindings];
-			const moduleName = ts.isStringLiteral(statement.moduleSpecifier)
-				? statement.moduleSpecifier.text : statement.moduleSpecifier.getText(sourceFile);
+			const moduleName = statement.moduleSpecifier.text;
 
 			for (const binding of bindings) {
 				if (binding) {
@@ -1686,9 +1581,7 @@ function organizeContent(content: string, filePath: string, options?: Partial<Or
 		report?.reasons.push('unsupported-scripts');
 	}
 
-	if (scriptBlocks.some(block => getImportProtection(ts.createSourceFile(
-		block.filePath, content.slice(block.contentStart, block.contentEnd), ts.ScriptTarget.Latest, true, getScriptKind(block.filePath),
-	)).fileIgnored)) {
+	if (scriptBlocks.some(block => getImportProtection(syntax.parseSource(block.filePath, content.slice(block.contentStart, block.contentEnd))).fileIgnored)) {
 		if (report) {
 			report.hasDirectives = true;
 			report.reasons.push('ignored-file');
@@ -1733,7 +1626,7 @@ export function hasImportAuthorityDirectives(content: string, filePath = 'file.t
 			hasImportAuthorityDirectives(content.slice(block.contentStart, block.contentEnd), block.filePath));
 	}
 
-	return getImportProtection(ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath))).hasDirectives;
+	return getImportProtection(syntax.parseSource(filePath, content)).hasDirectives;
 }
 
 export function removeUnusedImportsByScan(content: string, filePath = 'file.ts'): string {
@@ -1741,7 +1634,7 @@ export function removeUnusedImportsByScan(content: string, filePath = 'file.ts')
 		return content;
 	}
 
-	const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	const sourceFile = syntax.parseSource(filePath, content);
 	if (hasParseDiagnostics(sourceFile)) {
 		return content;
 	}
@@ -1750,10 +1643,7 @@ export function removeUnusedImportsByScan(content: string, filePath = 'file.ts')
 	 * JSX factories and fragment bindings can be supplied by compiler or build
 	 * configuration that this standalone heuristic cannot safely infer.
 	 */
-	const containsJsx = (node: ts.Node): boolean => ts.isJsxElement(node)
-		|| ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node)
-		|| !!ts.forEachChild(node, containsJsx);
-	if (containsJsx(sourceFile)) {
+	if (sourceFile.hasJsx) {
 		return content;
 	}
 
@@ -1806,7 +1696,7 @@ export function getNamespaceImportFixes(content: string, filePath = 'file.ts', c
 		return skip('Vue template references require the Vue language service.');
 	}
 
-	const source     = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	const source     = syntax.parseSource(filePath, content);
 	const protection = getImportProtection(source);
 
 	if (hasParseDiagnostics(source)) {
@@ -1840,9 +1730,7 @@ export function getImportFixes(content: string, filePath = 'file.ts', options?: 
 
 	if (path.extname(filePath).toLowerCase() === '.vue') {
 		const blocks = findVueScriptBlocks(content, filePath);
-		if (!blocks || blocks.some(block => getImportProtection(ts.createSourceFile(
-			block.filePath, content.slice(block.contentStart, block.contentEnd), ts.ScriptTarget.Latest, true, getScriptKind(block.filePath),
-		)).fileIgnored)) {
+		if (!blocks || blocks.some(block => getImportProtection(syntax.parseSource(block.filePath, content.slice(block.contentStart, block.contentEnd))).fileIgnored)) {
 			return [];
 		}
 
@@ -1862,7 +1750,7 @@ export function getImportFixes(content: string, filePath = 'file.ts', options?: 
 			})));
 	}
 
-	const source     = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, getScriptKind(filePath));
+	const source     = syntax.parseSource(filePath, content);
 	const protection = getImportProtection(source);
 	if (protection.fileIgnored || hasParseDiagnostics(source)) {
 		return [];

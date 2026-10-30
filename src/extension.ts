@@ -1,4 +1,5 @@
-import ts from 'typescript';
+import { readProjectConfig, readFile, fileExists } from './lib/project-config';
+import type { CompilerOptions } from './lib/project-config';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { statSync, existsSync } from 'node:fs';
@@ -25,7 +26,7 @@ import type {
 } from './lib/organizer';
 
 type AliasPrefixCacheEntry = {
-	compilerOptions?: ts.CompilerOptions;
+	compilerOptions?: CompilerOptions;
 	mtimeMs:          number;
 	prefixes:         string[];
 };
@@ -430,11 +431,7 @@ function readAliasPrefixesFromConfig(configPath: string): string[] {
 			return cached.prefixes;
 		}
 
-		const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
-			...ts.sys,
-			readDirectory:                       () => [],
-			onUnRecoverableConfigFileDiagnostic: () => undefined,
-		});
+		const parsed = readProjectConfig(configPath);
 		if (!parsed) {
 			aliasPrefixCache.set(configPath, {
 				mtimeMs,
@@ -725,8 +722,8 @@ function analyzeNamespaceImports(document: vscode.TextDocument): NamespaceConver
 
 	return getNamespaceImportFixes(document.getText(), getVirtualFilePath(document), {
 		compilerOptions: configPath ? aliasPrefixCache.get(configPath)?.compilerOptions : undefined,
-		readFile:        filename => openFiles.get(path.resolve(filename)) ?? ts.sys.readFile(filename),
-		fileExists:      filename => openFiles.has(path.resolve(filename)) || ts.sys.fileExists(filename),
+		readFile:        filename => openFiles.get(path.resolve(filename)) ?? readFile(filename),
+		fileExists:      filename => openFiles.has(path.resolve(filename)) || fileExists(filename),
 	});
 }
 

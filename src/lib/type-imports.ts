@@ -1,26 +1,12 @@
-import ts from 'typescript';
+import * as syntax from './syntax';
 import type { OffsetEdit } from './text-edit';
 
 type Usage = { type: boolean; value: boolean };
 
-function isTypeUse(node: ts.Identifier): boolean {
-	if (ts.isExportSpecifier(node.parent)) {
-		return node.parent.isTypeOnly || node.parent.parent.parent.isTypeOnly;
-	}
-
-	let target = node as ts.Node;
-	while (ts.isQualifiedName(target.parent) || ts.isPropertyAccessExpression(target.parent)) {
-		target = target.parent;
-	}
-
-	return ts.isTypeQueryNode(target.parent) || ts.isPartOfTypeNode(target);
-}
-
-// Bind local aliases without resolving dependencies or loading a project.
 export function convertTypeOnlyImports(
-	source: ts.SourceFile,
-	imports: ts.ImportDeclaration[],
-	compilerOptions: ts.CompilerOptions = {},
+	source: syntax.SourceFile,
+	imports: syntax.ImportDeclaration[],
+	compilerOptions: { jsxFactory?: string; jsxFragmentFactory?: string } = {},
 	inlineTypes = false,
 ): { content: string; converted: number; edits: OffsetEdit[]; note?: string } {
 	const unchanged = {
@@ -28,23 +14,11 @@ export function convertTypeOnlyImports(
 		converted: 0,
 		edits:     []
 	};
-
 	if (!/\.(?:ts|tsx|mts|cts)$/i.test(source.fileName) || imports.length === 0) {
 		return unchanged;
 	}
 
-	let hasDecorators = false;
-	let hasJsx        = false;
-	let hasEval       = false;
-	const inspect = (node: ts.Node): void => {
-		hasDecorators ||= ts.isDecorator(node);
-		hasJsx ||= ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node);
-		hasEval ||= ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'eval';
-		ts.forEachChild(node, inspect);
-	};
-	inspect(source);
-
-	if (hasDecorators || hasEval) {
+	if (source.hasDecorators || source.hasEval) {
 		return {
 			...unchanged,
 			note: 'Type-import conversion skipped because decorators or eval may use imports implicitly.'
@@ -55,116 +29,51 @@ export function convertTypeOnlyImports(
 		(compilerOptions.jsxFactory ?? 'React.createElement').split('.')[0],
 		(compilerOptions.jsxFragmentFactory ?? 'React.Fragment').split('.')[0],
 	]);
-
-	for (const comment of ts.getLeadingCommentRanges(source.text, 0) ?? []) {
+	for (const comment of syntax.getLeadingCommentRanges(source.text, 0)) {
 		for (const match of source.text.slice(comment.pos, comment.end).matchAll(/@jsx(?:Frag)?\s+([\w$]+)/g)) {
 			factoryNames.add(match[1]);
 		}
 	}
 
-	const candidates = imports.filter(statement => {
-		if (!statement.importClause || statement.importClause.isTypeOnly || statement.importClause.phaseModifier
-			|| statement.attributes || !ts.isStringLiteral(statement.moduleSpecifier)) {
-			return false;
+	const candidates = imports.filter(statement => statement.importClause && !statement.importClause.isTypeOnly
+		&& !statement.importClause.phaseModifier && !statement.attributes && !syntax.hasCommentTrivia(statement.getText()));
+	const explicitTypes = new Set(imports.flatMap(statement => {
+		const named = statement.importClause?.namedBindings;
+
+		return named && syntax.isNamedImports(named) ? named.elements.filter(element => element.isTypeOnly).map(element => element.name.start) : [];
+	}));
+	const usages = new Map<number, Usage>();
+	for (const reference of source.references) {
+		const binding = syntax.resolveReference(reference);
+		if (!binding?.import) {
+			continue;
 		}
 
-		const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, statement.getText(source));
-
-		for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-			if (token === ts.SyntaxKind.SingleLineCommentTrivia || token === ts.SyntaxKind.MultiLineCommentTrivia) {
-				return false;
-			}
-		}
-
-		return true;
-	});
-	if (candidates.length === 0) {
-		return unchanged;
+		const usage = usages.get(binding.start) ?? {
+			type:  false,
+			value: source.hasJsx && factoryNames.has(binding.name)
+		};
+		usage.type ||= reference.typeOnly;
+		usage.value ||= !reference.typeOnly;
+		usages.set(binding.start, usage);
 	}
 
-	const host = {
-		getSourceFile:             filename => filename === source.fileName ? source : undefined,
-		getDefaultLibFileName:     () => '',
-		writeFile:                 () => undefined,
-		getCurrentDirectory:       () => '',
-		getCanonicalFileName:      filename => filename,
-		useCaseSensitiveFileNames: () => true,
-		getNewLine:                () => '\n',
-		fileExists:                filename => filename === source.fileName,
-		readFile:                  filename => filename === source.fileName ? source.text : undefined,
-	} as ts.CompilerHost;
-	const checker = ts.createProgram([source.fileName], {
-		noResolve: true,
-		noLib:     true,
-		target:    ts.ScriptTarget.Latest,
-	}, host).getTypeChecker();
-	const usages   = new Map<ts.Symbol, Usage>();
-	const bindings = new Map<ts.Identifier, Usage>();
+	const onlyType = (name: syntax.TextNode | undefined): boolean => {
+		const usage = name && usages.get(name.start);
 
-	for (const statement of candidates) {
-		const clause = statement.importClause!;
-		const named  = clause.namedBindings;
-		const names = [clause.name, ...(named ? ts.isNamespaceImport(named) ? [named.name]
-			: named.elements.filter(element => !element.isTypeOnly).map(element => element.name) : [])];
-		for (const name of names) {
-			if (!name) {
-				continue;
-			}
-
-			const symbol = checker.getSymbolAtLocation(name);
-			if (!symbol) {
-				continue;
-			}
-
-			const usage = usages.get(symbol) ?? {
-				type:  false,
-				value: hasJsx && factoryNames.has(name.text)
-			};
-			usages.set(symbol, usage);
-			bindings.set(name, usage);
-		}
-	}
-
-	const visit = (node: ts.Node): void => {
-		if (ts.isImportDeclaration(node)) {
-			return;
-		}
-
-		if (ts.isIdentifier(node)) {
-			const symbol = ts.isShorthandPropertyAssignment(node.parent)
-				? checker.getShorthandAssignmentValueSymbol(node.parent)
-				: ts.isExportSpecifier(node.parent) ? checker.getExportSpecifierLocalTargetSymbol(node.parent)
-					: checker.getSymbolAtLocation(node);
-			const usage = symbol && usages.get(symbol);
-			if (usage) {
-				if (isTypeUse(node)) {
-					usage.type = true;
-				} else {
-					usage.value = true;
-				}
-			}
-		}
-
-		ts.forEachChild(node, visit);
-	};
-	visit(source);
-
-	const onlyType = (name: ts.Identifier | undefined): boolean => {
-		const usage = name && bindings.get(name);
-
-		return !!usage?.type && !usage.value;
+		return !!name && !explicitTypes.has(name.start) && !!usage?.type && !usage.value;
 	};
 	const edits   = [] as Array<{ start: number; end: number; text: string }>;
 	let converted = 0;
 	const eol     = source.text.includes('\r\n') ? '\r\n' : '\n';
 
 	for (const statement of candidates) {
-		const clause         = statement.importClause!;
-		const named          = clause.namedBindings;
-		const elements       = named && ts.isNamedImports(named) ? [...named.elements] : [];
+		const clause   = statement.importClause!;
+		const named    = clause.namedBindings;
+		const elements = named && syntax.isNamedImports(named) ? [...named.elements] : [];
 		const convertedNames = elements.filter(element => onlyType(element.name));
-		const typeDefault    = onlyType(clause.name);
-		const typeNamespace  = !!named && ts.isNamespaceImport(named) && onlyType(named.name);
+		const typeDefault   = onlyType(clause.name);
+		const typeNamespace = !!named && syntax.isNamespaceImport(named) && onlyType(named.name);
 		if (!typeDefault && !typeNamespace && convertedNames.length === 0) {
 			continue;
 		}
@@ -172,8 +81,8 @@ export function convertTypeOnlyImports(
 		converted += Number(typeDefault) + Number(typeNamespace) + convertedNames.length;
 
 		const values = elements.filter(element => !element.isTypeOnly && !onlyType(element.name));
-		const types  = elements.filter(element => element.isTypeOnly || onlyType(element.name));
-		const specifier = (element: ts.ImportSpecifier): string => element.propertyName
+		const types = elements.filter(element => element.isTypeOnly || onlyType(element.name));
+		const specifier = (element: syntax.ImportSpecifier): string => element.propertyName
 			? `${element.propertyName.getText(source)} as ${element.name.text}` : element.name.text;
 		const from       = ` from ${statement.moduleSpecifier.getText(source)}${statement.getText(source).trimEnd().endsWith(';') ? ';' : ''}`;
 		const result     = [] as string[];
@@ -183,7 +92,7 @@ export function convertTypeOnlyImports(
 			valueParts.push(clause.name.text);
 		}
 
-		if (named && ts.isNamespaceImport(named) && !typeNamespace) {
+		if (named && syntax.isNamespaceImport(named) && !typeNamespace) {
 			valueParts.push(named.getText(source));
 		}
 
@@ -193,7 +102,7 @@ export function convertTypeOnlyImports(
 			valueParts.push(`{ ${namedParts.join(', ')} }`);
 		}
 
-		if (named && ts.isNamedImports(named) && elements.length === 0) {
+		if (named && syntax.isNamedImports(named) && elements.length === 0) {
 			valueParts.push('{}');
 		}
 
@@ -233,7 +142,7 @@ export function convertTypeOnlyImports(
 	return {
 		content: chunks.join(''),
 		converted,
-		edits: edits.map(edit => ({
+		edits:   edits.map(edit => ({
 			start:   edit.start,
 			end:     edit.end,
 			newText: edit.text

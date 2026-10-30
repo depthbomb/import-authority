@@ -1,10 +1,11 @@
 // Run: node --import tsx benchmarks/organizer.cjs <baseline-commit>
 const assert               = require('node:assert/strict');
 const { execFileSync }     = require('node:child_process');
-const { createRequire }    = require('node:module');
-const { resolve }          = require('node:path');
+const { join, resolve }    = require('node:path');
+const { mkdtempSync, writeFileSync } = require('node:fs');
+const { tmpdir }           = require('node:os');
+const { buildSync }        = require('esbuild');
 const { performance }      = require('node:perf_hooks');
-const { runInThisContext } = require('node:vm');
 const ts                   = require('typescript');
 const current              = require('../src/lib/organizer.ts');
 const revision             = process.argv[2];
@@ -12,24 +13,21 @@ if (!revision) {
 	throw new Error('Pass the baseline commit to compare.');
 }
 
-const source = execFileSync('git', ['show', `${revision}:src/lib/organizer.ts`], {
-	encoding: 'utf8'
+// Snapshot every runtime dependency so a refactor cannot mix old and new analyzers.
+const snapshot = mkdtempSync(join(tmpdir(), 'import-authority-benchmark-'));
+const archive = join(snapshot, 'source.tar');
+writeFileSync(archive, execFileSync('git', ['archive', '--format=tar', revision, 'src']));
+execFileSync('tar', ['-xf', archive, '-C', snapshot]);
+const baselineFile = join(snapshot, 'organizer.cjs');
+buildSync({
+	entryPoints: [join(snapshot, 'src/lib/organizer.ts')],
+	nodePaths: [resolve('node_modules')],
+	outfile: baselineFile,
+	bundle: true,
+	platform: 'node',
+	format: 'cjs',
 });
-const compiled = ts.transpileModule(source, {
-	compilerOptions: {
-		module:          ts.ModuleKind.CommonJS,
-		target:          ts.ScriptTarget.ES2022,
-		esModuleInterop: true
-	}
-}).outputText;
-const baselineModule = {
-	exports: {}
-};
-runInThisContext(`(function(require,module,exports){${compiled}\n})`)(
-	createRequire(resolve('src/lib/organizer.ts')), baselineModule, baselineModule.exports,
-);
-
-const baseline = baselineModule.exports;
+const baseline = require(baselineFile);
 /**
  * Exercise binding-index transitions against the previous implementation before
  * timing. A fixed seed makes failures reproducible without timing-based tests.
@@ -85,13 +83,15 @@ console.log(JSON.stringify({
 const median = values => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
 for (const count of [100, 1000, 5000]) {
-	for (const scenario of ['distinct', 'blocks', 'defaults']) {
+	for (const scenario of ['distinct', 'blocks', 'defaults', 'types']) {
 		const input = Array.from({
 			length: count
 		}, (_, i) => scenario === 'defaults'
 			? `import Name${i} from 'module';`
 			: `import { Name${i} } from 'module${i}';${scenario === 'blocks' ? `\nconsole.log(Name${i});` : ''}`
-		).join('\n') + '\nconsole.log(Name0);\n';
+		).join('\n') + (scenario === 'types'
+			? '\n' + Array.from({ length: count }, (_, i) => `let value${i}: Name${i};`).join('\n')
+			: '\nconsole.log(Name0);\n');
 		assert.equal(current.organizeImportsContent(input), baseline.organizeImportsContent(input));
 
 		for (let i = 0; i < 4; i++) {
