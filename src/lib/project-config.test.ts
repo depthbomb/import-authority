@@ -90,3 +90,22 @@ test('declaration version conditions follow the targeted language version', () =
 		assert.equal(matchesLanguageVersion(range), false, range);
 	}
 });
+
+test('broken parents cannot discard valid local JSX and alias options', () => {
+	for (const parent of [
+		{},
+		{ 'base.json': '{bad json' },
+		{ 'base.json': '{"extends":"./tsconfig", "compilerOptions":{"jsxFragmentFactory":"Fragment"}}' },
+		{ 'node_modules/base/package.json': '{bad json' },
+	] as Record<string, string>[]) {
+		const filename = fixture({
+			...parent,
+			'tsconfig.json': JSON.stringify({ extends: parent['node_modules/base/package.json'] ? 'base' : './base', compilerOptions: { jsxFactory: 'h', paths: { '@app/*': ['src/*'] } } }),
+		});
+		const expected = ts.getParsedCommandLineOfConfigFile(filename, {}, { ...ts.sys, readDirectory: () => [], onUnRecoverableConfigFileDiagnostic() {} })!;
+		const actual = readProjectConfig(filename)!;
+		for (const key of ['jsxFactory', 'jsxFragmentFactory', 'paths']) {
+			assert.deepEqual(actual.options[key], expected.options[key], key);
+		}
+	}
+});

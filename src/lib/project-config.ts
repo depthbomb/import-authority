@@ -207,19 +207,22 @@ function loadConfig(filename: string, seen: Set<string>, configDirectory: string
 	const directory = path.dirname(file);
 	const parents   = typeof config.extends === 'string' ? [config.extends] : Array.isArray(config.extends) ? config.extends.filter(value => typeof value === 'string') : [];
 	for (const parent of parents) {
-		const resolved = resolveExtendedConfig(parent, directory);
-		if (!resolved) {
-			continue;
-		}
-
+		let resolved: string | undefined;
 		try {
+			resolved = resolveExtendedConfig(parent, directory);
+			if (!resolved) {
+				continue;
+			}
+
 			options = {
 				...options,
 				...loadConfig(resolved, seen, configDirectory)
 			};
 		} catch {
 			// Keep usable local options when an extended config is unreadable or malformed.
-			seen.delete(process.platform === 'win32' ? resolved.toLowerCase() : resolved);
+			if (resolved) {
+				seen.delete(process.platform === 'win32' ? resolved.toLowerCase() : resolved);
+			}
 		}
 	}
 
