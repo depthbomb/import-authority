@@ -84,6 +84,8 @@ test('release compatibility: multi-file exports and receiver safety', () => {
 		'export * from "./implementation";',
 		'export { answer, call } from "./implementation";',
 		'import { answer, call } from "./implementation"; export { answer, call };',
+		'import * as original from "./implementation"; export import answer = original.answer; export import call = original.call;',
+		'import original = require("./implementation"); import first = original.call; export import call = first; export import answer = original.answer;',
 		'/// <reference path="./virtual.d.ts" />\nexport { answer, call } from "virtual";',
 	];
 	for (const library of libraries) {

@@ -261,7 +261,7 @@ class Parser {
 		}
 
 		if (this.at('import') && !['(', '.'].includes(this.scanner.peek().text)) {
-			return this.importDeclaration(top);
+			return this.importDeclaration(top, exported);
 		}
 
 		const declared = this.at('declare') && this.scanner.peek().kind === 'identifier';
@@ -580,7 +580,7 @@ class Parser {
 		} else {
 			do {
 				const token = this.name(true);
-				this.bind(token, 3);
+				const binding = this.bind(token, 3);
 				this.exportBinding(token, exported || ambient);
 				const owner = (exported || ambient) && this.scope.namespace ? this.scope.namespace : this.scope;
 				const namespaces = owner.namespaces ??= new Map();
@@ -591,6 +591,7 @@ class Parser {
 					exports: []
 				};
 				namespaces.set(token.text, shared);
+				binding.namespace = shared;
 				this.scope = shared;
 				exported = true;
 			} while (this.take('.'));
@@ -774,7 +775,7 @@ class Parser {
 		return new TextNode(this.source.text, start, this.end);
 	}
 
-	private importDeclaration(top: boolean): ImportDeclaration | undefined {
+	private importDeclaration(top: boolean, exported: boolean): ImportDeclaration | undefined {
 		const fullStart = this.end;
 		const start     = this.next().start;
 		let clause: ImportClause | undefined;
@@ -799,7 +800,39 @@ class Parser {
 					imported: 'default'
 				});
 				if (this.take('=')) {
-					this.expression(2);
+					if (this.at('require') && this.scanner.peek().text === '(') {
+						this.next();
+						this.expect('(');
+						binding.import = {
+							module: this.string().text,
+							imported: '*'
+						};
+						this.expect(')');
+					} else {
+						const reference = this.reference(this.name(), false, 3);
+						const members: string[] = [];
+						while (this.take('.')) {
+							const member = this.name();
+							members.push(member.text);
+							if (!reference.member) {
+							reference.member = {
+								name:      member.text,
+								nameStart: member.start,
+								start:     reference.start,
+								end:       member.end,
+								optional:  false,
+								call:      false,
+								jsx:       false,
+								computed:  false
+							};
+							}
+						}
+						binding.alias = {
+							reference,
+							members
+						};
+					}
+					this.exportBinding(token, exported);
 					this.semicolon();
 					return;
 				}

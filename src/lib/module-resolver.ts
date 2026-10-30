@@ -91,6 +91,10 @@ export class ModuleResolver {
 			return undefined;
 		}
 
+		return this.exportFrom(source, name, visited);
+	}
+
+	private exportFrom(source: SourceFile, name: string, visited: Set<string>): ResolvedExport | undefined {
 		for (const entry of source.exports.filter(entry => entry.exported === name)) {
 			if (entry.commonJs && resolveReference(entry.commonJs)) {
 				continue;
@@ -99,24 +103,14 @@ export class ModuleResolver {
 			if (entry.module) {
 				const target = this.resolve(entry.module, entry.source?.fileName ?? source.fileName);
 				if (target) {
-					return entry.namespace ? {
-						source,
-						name
+					return entry.namespace && this.source(target) ? {
+						source: this.source(target)!,
+						name: '*'
 					} : this.exported(target, entry.imported ?? name, new Set(visited));
 				}
 			} else if (entry.local || entry.binding) {
 				const binding = entry.binding ?? (entry.scope ?? source.scope).bindings.get(entry.local!)?.[0];
-				if (binding?.import && binding.import.imported !== '*') {
-					const target = this.resolve(binding.import.module, entry.source?.fileName ?? source.fileName);
-
-					return target ? this.exported(target, binding.import.imported, new Set(visited)) : undefined;
-				}
-
-				return binding ? {
-					source: entry.source ?? source,
-					binding,
-					name
-				} : undefined;
+				return binding ? this.resolveBinding(entry.source ?? source, binding, visited) : undefined;
 			} else {
 				return {
 					source,
@@ -139,6 +133,66 @@ export class ModuleResolver {
 		}
 
 		return result;
+	}
+
+	private resolveBinding(source: SourceFile, binding: Binding, seen: Set<string>): ResolvedExport | undefined {
+		const key = `${source.fileName}\0binding:${binding.start}`;
+		if (seen.has(key)) {
+			return undefined;
+		}
+
+		const visited = new Set(seen).add(key);
+		if (binding.import) {
+			const target = this.resolve(binding.import.module, source.fileName);
+			if (!target) {
+				return undefined;
+			}
+
+			if (binding.import.imported !== '*') {
+				return this.exported(target, binding.import.imported, visited);
+			}
+
+			const module = this.source(target);
+			return module ? {
+				source: module,
+				name:   '*'
+			} : undefined;
+		}
+
+		if (binding.alias) {
+			const target = resolveReference(binding.alias.reference);
+			let result = target && this.resolveBinding(source, target, visited);
+			if (!binding.alias.members.length && result?.name !== '*' && !result?.binding?.namespace) {
+				// A bare import-equals target must name a namespace, not a value alias.
+				return {
+					source,
+					binding,
+					name: binding.name
+				};
+			}
+
+			for (const member of binding.alias.members) {
+				if (!result) {
+					return undefined;
+				}
+
+				const scope = result.binding?.namespace;
+				result = scope ? this.exportFrom({
+					...result.source,
+					scope,
+					exports: scope.exports ?? []
+				}, member, visited)
+					: result.name === '*' ? this.exportFrom(result.source, member, visited) : undefined;
+			}
+
+			return result;
+		}
+
+		return {
+			source,
+			binding,
+			name: binding.name
+		};
 	}
 
 	private indexAmbientModules(): void {
@@ -177,6 +231,7 @@ export class ModuleResolver {
 			}
 
 			const dependencies = source.statements.filter(isImportDeclaration).map(statement => statement.moduleSpecifier.text);
+			dependencies.push(...[...source.scope.bindings.values()].flat().flatMap(binding => binding.import ? [binding.import.module] : []));
 			dependencies.push(...source.exports.flatMap(entry => entry.module ? [entry.module] : []));
 			for (const comment of source.comments) {
 				const reference = /^\/\/\/\s*<reference\s+(path|types)\s*=\s*(['"])(.*?)\2/.exec(source.text.slice(comment.pos, comment.end));

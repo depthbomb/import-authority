@@ -19,6 +19,8 @@ export type Binding = {
 	constant:  boolean;
 	function?: FunctionInfo;
 	import?:   { module: string; imported: string };
+	alias?:    { reference: Reference; members: string[] };
+	namespace?: Scope;
 };
 export type FunctionInfo = {
 	start:     number;
