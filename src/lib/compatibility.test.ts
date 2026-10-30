@@ -233,3 +233,19 @@ test('compatibility exception: parameter initializers must retain imports used b
 	assert.throws(() => new Function('require', 'exports', compile(original) + '\nreturn f();')(() => ({ Model: model }), {}), ReferenceError);
 	assert.equal(new Function('require', 'exports', compile(fixed) + '\nreturn f();')(() => ({ Model: model }), {}), model);
 });
+
+test('release compatibility: incremental typing preserves diagnostics and edits on incomplete files', () => {
+	for (const body of [
+		'function f(value: Model) { return value; }',
+		'class C { static { var Model = 1; } method() { return Model; } }',
+		'const value = (Model?.member ?? Model) as Model;',
+		'type T<K> = K extends Model ? keyof Model : never;',
+		'const view = <Model value={Model}><Model /></Model>;',
+		'const value = `text ${Model}`;',
+		'namespace N { export const Model = 1; } namespace N { Model; }',
+	]) {
+		for (let length = 0; length <= body.length; length++) {
+			compare(`import { Model } from './lib';\nimport { Z } from 'z';\n${body.slice(0, length)}`, 'typing.tsx');
+		}
+	}
+});

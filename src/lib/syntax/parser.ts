@@ -567,6 +567,7 @@ class Parser {
 		}
 
 		let shared: Scope;
+		const external = this.token.kind === 'string';
 		if (global || this.token.kind === 'string') {
 			const name = global ? 'global' : this.string().text;
 			shared = this.source.ambientModules.get(name) ?? {
@@ -615,6 +616,10 @@ class Parser {
 			}
 			this.expect('}');
 		} else {
+			if (!external) {
+				this.fail('Expected a namespace body');
+			}
+
 			this.semicolon();
 		}
 
@@ -923,6 +928,10 @@ class Parser {
 	private variables(exported = false): void {
 		this.take('await');
 		const kind = this.next().text;
+		if (this.token.kind === 'eof' || this.at(';')) {
+			return;
+		}
+
 		do {
 			this.jsdoc(true);
 			const bindings = this.bindingPattern(kind === 'const' || kind === 'using', kind === 'var');
@@ -1750,8 +1759,8 @@ class Parser {
 	}
 
 	private jsx(nested = false): void {
-		this.source.hasJsx = true;
 		this.expect('<');
+		this.source.hasJsx ||= this.token.kind === 'identifier' || this.at('>');
 		const fragment = this.at('>');
 		const name     = fragment ? '' : this.jsxName(true);
 		if (this.at('<')) {
