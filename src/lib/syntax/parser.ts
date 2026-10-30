@@ -1935,7 +1935,7 @@ class Parser {
 
 			this.bind(this.name(true), 1);
 			if (this.take('extends')) {
-				this.type(2);
+				this.type();
 			}
 
 			if (this.take('=')) {

@@ -50,6 +50,16 @@ test('release compatibility: valid deep expressions are organized', () => {
 	}
 });
 
+test('release compatibility: generic constraints can contain conditional types', () => {
+	for (const constraint of [
+		'S extends "safe" ? keyof Model : string',
+		'S extends Model ? (Model extends object ? keyof Model : never) : string',
+		'S extends infer U extends Model ? U : never',
+	]) {
+		compare(`import { Model } from './lib';\ntype PickKey<S, Key extends ${constraint}, Other = Model> = Key;`);
+	}
+});
+
 test('release compatibility: JSDoc prose and actual references remain distinct', () => {
 	for (const comment of ['/** utils provide helpers. */', '/** @description utils provide helpers. */', '/** @type {utils.Model} */', '/** See {@link utils.answer}. */', '/** @param {utils.Model} value input */']) {
 		const content = `import * as utils from './lib.js';\n${comment}\nconst answer = utils.answer;`;
