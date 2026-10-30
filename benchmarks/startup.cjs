@@ -94,6 +94,13 @@ for (const key of ['loadMs', 'activateMs', 'firstOrganizeMs', 'warmOrganizeMs', 
 	summary[key] = { before, after, improvementPercent: (1 - after / before) * 100 };
 }
 
+if (process.argv.includes('--check')) {
+	assert.ok(statSync(candidate).size <= statSync(baseline).size * 0.95, 'Bundle size must improve by at least 5%.');
+	for (const key of ['loadAndActivateMs', 'firstOrganizeMs']) {
+		assert.ok(summary[key].improvementPercent >= 5, `${key} must improve by at least 5%.`);
+	}
+}
+
 console.log(JSON.stringify({
 	revision,
 	node: process.version,

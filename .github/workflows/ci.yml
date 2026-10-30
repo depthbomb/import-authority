@@ -9,17 +9,49 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn package:vsix
-      - uses: actions/upload-artifact@v4
+      - if: runner.os == 'Linux'
+        run: node benchmarks/startup.cjs f38c54992fb91cda0b962ecf8b510aab478d0cc7 9 --check
+      - if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a yarn test:host 1.110.0
+          xvfb-run -a yarn test:host stable
+      - if: runner.os != 'Linux'
+        run: |
+          yarn test:host 1.110.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          yarn test:host stable
+        shell: pwsh
+      - uses: actions/upload-artifact@v7
         with:
-          name: import-authority-vsix
+          name: import-authority-vsix-${{ runner.os }}
           path: '*.vsix'
           if-no-files-found: error
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: node scripts/prepare-corpus.cjs

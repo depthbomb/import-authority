@@ -148,6 +148,12 @@ Use Node.js 24 and the repository's pinned Yarn version.
 
 The extension uses its own scanner, syntax analyzer, JSONC config reader, and module resolver. TypeScript is a development dependency for compilation and compatibility tests; it is neither bundled nor loaded by the extension. The build rejects runtime dependencies. Syntax and module-resolution tests compare behavior with TypeScript 6.0, including shadowing, JSX, config inheritance, conditional exports, and package declaration versions. Update those compatibility tests when adding support for new language syntax.
 
+Compatibility tests freeze the previous extension at `f38c549` and TypeScript at `6.0.3`. They compare complete organization reports, quick fixes, fallback removal, namespace edits, and refusal reasons. One tested correction deliberately differs: a function parameter initializer keeps runtime imports even when a declaration inside the function body has the same name. The previous analyzer could erase those imports.
+
+After `yarn package`, run `yarn test:host 1.110.0` and `yarn test:host stable` to compare the old and new production extensions in real VS Code hosts. Tests use temporary profiles and workspaces. CI runs them on Windows, Linux, and macOS. Run `node scripts/prepare-corpus.cjs` for pinned Vue and TypeScript source comparisons, or `yarn test:corpus <directory>` for another project. Corpus failures include source paths and exact differences in a temporary JSON report. Passing these checks establishes compatibility for the tested inputs; it is not a proof for every possible program or future language feature.
+
+The corpus gate checks syntax and all organization results throughout each project. It also compares the first 32 files with namespace imports in each project, in sorted path order. Set `IMPORT_AUTHORITY_CORPUS_NAMESPACE_LIMIT` to increase that limit; the old compiler rebuilds the dependency graph for every namespace request, so large runs take longer. Do not update the frozen oracle or add broad exclusions just to make a failure pass. Reduce each difference to a fixture, then fix it or explicitly document and test a behavior correction.
+
 ```sh
 yarn install
 yarn test
