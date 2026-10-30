@@ -13,7 +13,7 @@ function collect(text: string, identifiers: Set<string>): void {
 export function jsdocIdentifiers(source: SourceFile): Set<string> {
 	const identifiers = new Set<string>();
 	for (const comment of source.comments) {
-		if (!source.text.startsWith('/**', comment.pos)) {
+		if (!source.jsdocComments.has(comment.pos) || !source.text.startsWith('/**', comment.pos)) {
 			continue;
 		}
 

@@ -1,4 +1,4 @@
-import { Scanner } from './scanner';
+import { Scanner, getLeadingCommentRanges, getTrailingCommentRanges } from './scanner';
 import type { Token } from './scanner';
 import { TextNode } from './model';
 import type {
@@ -60,6 +60,7 @@ class Parser {
 			statements:          [],
 			endOfFileToken:      new TextNode(text, text.length, text.length),
 			comments:            this.scanner.comments,
+			jsdocComments:       new Set(),
 			parseDiagnostics:    this.scanner.errors,
 			scope:               this.scope,
 			references:          [],
@@ -96,6 +97,7 @@ class Parser {
 
 		this.source.endOfFileToken = new TextNode(this.source.text, this.source.text.length, this.source.text.length, this.end);
 		this.source.endOfFileToken.parent = this.source;
+		this.jsdoc();
 
 		return this.source;
 	}
@@ -140,6 +142,21 @@ class Parser {
 
 	private fail(message: string): never {
 		throw new SyntaxError(`${message} at ${this.token.start}`);
+	}
+
+	private jsdoc(inline = false): void {
+		if (!this.source.text.slice(this.token.fullStart, this.token.start).includes('/**')) {
+			return;
+		}
+
+		const comments = getLeadingCommentRanges(this.source.text, this.token.fullStart);
+		if (inline) {
+			comments.push(...getTrailingCommentRanges(this.source.text, this.token.fullStart));
+		}
+
+		for (const comment of comments) {
+			this.source.jsdocComments.add(comment.pos);
+		}
 	}
 
 	private name(binding = false): Token {
@@ -219,6 +236,7 @@ class Parser {
 	}
 
 	private statement(top = false, exported = false): ImportDeclaration | undefined {
+		this.jsdoc();
 		return this.readStatement(top, exported);
 	}
 
@@ -674,6 +692,7 @@ class Parser {
 		} else if (this.take('{')) {
 			const references: Array<{ token: Token; typeOnly: boolean }> = [];
 			while (!this.at('}')) {
+				this.jsdoc(true);
 				const inlineType = this.at('type') && !['as', ',', '}'].includes(this.scanner.peek().text);
 				if (inlineType) {
 					this.next();
@@ -872,6 +891,7 @@ class Parser {
 		this.take('await');
 		const kind = this.next().text;
 		do {
+			this.jsdoc(true);
 			const bindings = this.bindingPattern(kind === 'const' || kind === 'using', kind === 'var');
 			this.take('!');
 			if (this.take(':')) {
@@ -955,6 +975,7 @@ class Parser {
 	private parameters(): void {
 		this.expect('(');
 		while (!this.at(')')) {
+			this.jsdoc(true);
 			this.decorators();
 			while (modifiers.has(this.token.text) && this.scanner.peek().kind === 'identifier') {
 				this.next();
@@ -1027,6 +1048,7 @@ class Parser {
 	}
 
 	private functionDeclaration(declaration: boolean, exported = false, anonymous = false): FunctionInfo {
+		this.jsdoc(!declaration);
 		const start = this.next().start;
 		this.take('*');
 		const name = this.token.kind === 'identifier' ? this.name(true) : undefined;
@@ -1056,6 +1078,7 @@ class Parser {
 	}
 
 	private classDeclaration(declaration: boolean, exported = false, anonymous = false): void {
+		this.jsdoc();
 		this.expect('class');
 		const name = this.token.kind === 'identifier' && !['extends', 'implements'].includes(this.token.text) ? this.name(true) : undefined;
 		if (declaration && !name && !anonymous) {
@@ -1134,6 +1157,7 @@ class Parser {
 	}
 
 	private propertyName(): Token | undefined {
+		this.jsdoc();
 		if (this.take('[')) {
 			this.expression();
 			this.expect(']');
@@ -1153,6 +1177,7 @@ class Parser {
 		const starts = [this.token.start];
 		this.expect('(');
 		while (this.at('(') && !this.arrowAhead()) {
+			this.jsdoc(true);
 			starts.push(this.next().start);
 		}
 
@@ -1260,6 +1285,7 @@ class Parser {
 			return empty();
 		}
 		if (allowArrow && this.at('async') && !this.scanner.peek().lineBreak && this.arrowAhead(true)) {
+			this.jsdoc(true);
 			this.next();
 			const parameter = this.token.kind === 'identifier' ? this.name(true) : undefined;
 			return {
@@ -1270,6 +1296,7 @@ class Parser {
 		}
 
 		if (allowArrow && (this.at('(') || this.at('<')) && this.arrowAhead()) {
+			this.jsdoc(true);
 			return {
 				...empty(),
 				function: this.functionTail(token.start, true),
@@ -1278,6 +1305,7 @@ class Parser {
 		}
 
 		if (allowArrow && this.token.kind === 'identifier' && this.scanner.peek().text === '=>') {
+			this.jsdoc(true);
 			const parameter = this.name(true);
 			return {
 				...empty(),
@@ -1287,6 +1315,7 @@ class Parser {
 		}
 
 		if (this.at('async') && this.scanner.peek().text === 'function') {
+			this.jsdoc(true);
 			this.next();
 		}
 
@@ -1364,6 +1393,7 @@ class Parser {
 		}
 
 		if (this.at('(')) {
+			this.jsdoc(true);
 			const expression = this.parenthesizedExpression();
 
 			return {
@@ -1901,7 +1931,7 @@ class Parser {
 			this.type(3);
 		}
 
-		if (minimum <= 1 && this.take('extends')) {
+		if (minimum <= 1 && !this.token.lineBreak && this.take('extends')) {
 			const previous = this.enter('type');
 			this.type(2);
 			this.expect('?');
@@ -2074,6 +2104,7 @@ class Parser {
 	}
 
 	private typeMember(): void {
+		this.jsdoc();
 		const previous = this.enter('type');
 		this.take('+');
 		this.take('-');

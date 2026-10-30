@@ -68,6 +68,35 @@ test('release compatibility: Classic resolution and ambient re-exports remain av
 	}
 });
 
+test('release compatibility: multi-file exports and receiver safety', () => {
+	const libraries = [
+		'export const answer = 42; export function call() { return answer; }',
+		'export const answer = 42; export function call() { return this.answer; }',
+		'export const answer = 42; export const call = () => answer;',
+		'export let answer = 42; export let call = () => answer; call = () => 0;',
+		'export declare const answer: number; export declare function call(): number;',
+		'export const answer = 42; export class call {}',
+		'const answer = 42; function call() { return answer; } export { answer, call };',
+		'export const answer = 42; export function call() { return (() => this.answer)(); }',
+		'export const answer = 42; export function call() { function f() { return this.answer; } return answer; }',
+	];
+	const routes = [
+		'export * from "./implementation";',
+		'export { answer, call } from "./implementation";',
+		'import { answer, call } from "./implementation"; export { answer, call };',
+		'/// <reference path="./virtual.d.ts" />\nexport { answer, call } from "virtual";',
+	];
+	for (const library of libraries) {
+		for (const route of routes) {
+			for (const use of ['utils.answer;', 'utils.call();', 'new utils.call();', 'const fn = utils.call;', 'utils["answer"];', 'utils?.answer;', 'utils.answer = 3;']) {
+				const content = `import * as utils from './lib';\n${use}`;
+				const host = context({ 'lib.ts': route, 'implementation.ts': library, 'virtual.d.ts': `declare module "virtual" { ${library} }` });
+				assert.deepEqual(current.getNamespaceImportFixes(content, filename, host), baseline.getNamespaceImportFixes(content, filename, host), `${library}\n${route}\n${use}`);
+			}
+		}
+	}
+});
+
 test('release compatibility: local JSX options survive a missing extended config', () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), 'import-authority-config-parity-'));
 	const configFile = path.join(directory, 'tsconfig.json');
@@ -106,6 +135,12 @@ test('release compatibility: generated scope combinations preserve every public 
 		for (const wrap of wrappers) {
 			compare(`import { Model, Unused } from './lib';\nimport { Z } from 'z';\nlet item: Model;\n${wrap(body)}`);
 		}
+	}
+});
+
+test('release compatibility: a newline ends a conditional type before an extends property', () => {
+	for (const body of ['interface X { mixins?: Model[]\nextends?: Model }', 'type X = { value: Model\nextends: Model }', 'type X = Model\nextends Model ? string : number;']) {
+		compare(`import { Model } from './lib';\n${body}`);
 	}
 });
 
@@ -159,6 +194,28 @@ test('release compatibility: JSDoc tags, links, names and prose', () => {
 		}
 	}
 	assert.deepEqual(failures, []);
+});
+
+test('release compatibility: JSDoc attaches to declarations and casts, not arbitrary expressions', () => {
+	for (const body of [
+		'/** @type {utils.Model} */\nutils.answer;',
+		'utils.answer;\n/** @type {utils.Model} */',
+		'utils.answer; /** @type {utils.Model} */\nconst x=1;',
+		'const x = /** @type {utils.Model} */ utils.answer;',
+		'const x = /** @type {utils.Model} */ (utils.answer);',
+		'const x = (/** @type {utils.Model} */ (utils.answer));',
+		'const x = [/** @type {utils.Model} */ utils.answer];',
+		'const x = {/** @type {utils.Model} */ value: utils.answer};',
+		'const x = {\n/** @type {utils.Model} */\nvalue: utils.answer};',
+		'const x = /** @type {utils.Model} */ function(){ return utils.answer; };',
+		'const x = /** @type {utils.Model} */ () => utils.answer;',
+		'function f(/** @type {utils.Model} */ x) { return utils.answer; }',
+		'function f</** @type {utils.Model} */ T>() { return utils.answer; }',
+	]) {
+		const source = `import * as utils from './lib';\n${body}`;
+		const host = context({ 'lib.ts': 'export const answer = 42; export interface Model {}' });
+		assert.deepEqual(current.getNamespaceImportFixes(source, filename, host), baseline.getNamespaceImportFixes(source, filename, host), body);
+	}
 });
 
 test('compatibility exception: parameter initializers must retain imports used before entering the function body', () => {

@@ -82,6 +82,7 @@ export type SourceFile = {
 	statements:          TextNode[];
 	endOfFileToken:      TextNode;
 	comments:            CommentRange[];
+	jsdocComments:       Set<number>;
 	parseDiagnostics:    string[];
 	scope:               Scope;
 	references:          Reference[];
