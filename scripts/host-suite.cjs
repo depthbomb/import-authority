@@ -44,6 +44,13 @@ exports.run = async () => {
 		const items = await vscode.commands.executeCommand('vscode.executeCodeActionProvider', document.uri, range(document), kind, 100);
 		return items?.length ? items : undefined;
 	}, `actions ${kind}`);
+	const save = async document => {
+		// Wait for the new editor's language and source-action provider to be ready.
+		await actions(document, 'source.organizeImports.importAuthority');
+		const setting = vscode.workspace.getConfiguration('editor', document).get('codeActionsOnSave');
+		assert.equal(setting['source.organizeImports.importAuthority'], 'explicit');
+		assert.equal(await document.save(), true);
+	};
 
 	const document = await open('command.ts', source);
 	console.log('Host: diagnostics and quick fixes');
@@ -81,7 +88,7 @@ exports.run = async () => {
 	results.formatting = formatting.map(edit => ({ start: document.offsetAt(edit.range.start), end: document.offsetAt(edit.range.end), text: edit.newText }));
 	const saved = await open('save.ts', source);
 	await replace(saved, source + '// save\n');
-	assert.equal(await saved.save(), true);
+	await save(saved);
 	assert.notEqual(saved.getText(), source + '// save\n');
 	results.save = saved.getText();
 	results.savedFile = fs.readFileSync(saved.uri.fsPath, 'utf8');
@@ -152,7 +159,7 @@ exports.run = async () => {
 	results.tsxSaves = [];
 	for (let iteration = 0; iteration < 12; iteration++) {
 		await replace(view, tsxSource + `// edit ${iteration}\n`);
-		assert.equal(await view.save(), true);
+		await save(view);
 		assert.match(view.getText(), /import type \{ ButtonProps \}/);
 		assert.match(view.getText(), /import \* as React/);
 		assert.equal(fs.readFileSync(view.uri.fsPath, 'utf8'), view.getText());

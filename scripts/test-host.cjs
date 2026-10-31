@@ -13,6 +13,7 @@ async function main() {
 	manifest.contributes.languages = [{ id: 'vue', extensions: ['.vue'] }];
 	const results = [];
 	for (const variant of ['baseline', 'candidate']) {
+		console.log(`Host: ${variant} on VS Code ${process.argv[2] ?? 'stable'}`);
 		const extension = path.join(temporary, variant);
 		const workspace = path.join(extension, 'workspace');
 		fs.mkdirSync(path.join(extension, 'dist'), { recursive: true });
