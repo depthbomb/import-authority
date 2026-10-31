@@ -16,8 +16,6 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
-    env:
-      IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,10 +29,14 @@ jobs:
       - if: runner.os == 'Linux'
         run: node benchmarks/startup.cjs f38c54992fb91cda0b962ecf8b510aab478d0cc7 9 --check
       - if: runner.os == 'Linux'
+        env:
+          IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
         run: |
           xvfb-run -a yarn test:host 1.110.0
           xvfb-run -a yarn test:host stable
       - if: runner.os != 'Linux'
+        env:
+          IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
         run: |
           yarn test:host 1.110.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -68,7 +70,6 @@ jobs:
     env:
       IMPORT_AUTHORITY_CORPUS_SHARD: ${{ matrix.shard }}
       IMPORT_AUTHORITY_CORPUS_SHARDS: ${{ matrix.shards }}
-      IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
     steps:
       - uses: actions/checkout@v7
         with:
@@ -79,6 +80,8 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       - run: node scripts/prepare-corpus.cjs ${{ matrix.project }}
+        env:
+          IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
       - uses: actions/upload-artifact@v7
         if: always()
         with:
