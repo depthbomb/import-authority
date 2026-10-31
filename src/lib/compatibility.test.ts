@@ -109,6 +109,38 @@ test('release compatibility: multi-file exports and receiver safety', () => {
 	}
 });
 
+test('release compatibility: namespace write detection includes assignment target expressions', () => {
+	const host = context({ 'lib.ts': 'export const key = "item"; export function call() { return "item"; }' });
+	for (const use of [
+		'items[utils.call()] = 1;',
+		'items[choose(utils.key)] += 1;',
+		'delete items[utils.key];',
+		'items[utils.call()]++;',
+		'for (items[utils.key] of values) {}',
+		'({ [utils.key]: item } = value);',
+		'items[flag ? utils.key : "other"] = 1;',
+		'items[((utils.key))] = 1;',
+		'items[(() => utils.key)()] = 1;',
+		'items[(() => { return utils.key; })()] = 1;',
+		'items[(function () { return utils.call(); })()] = 1;',
+		'items[utils.call()];',
+		'items["item" as typeof utils.key] = 1;',
+		'items[<typeof utils.key>"item"] = 1;',
+		'items[(function (key: typeof utils.key) { return key; })("item")] = 1;',
+	]) {
+		const content = `import * as utils from './lib';\n${use}`;
+		assert.deepEqual(current.getNamespaceImportFixes(content, filename, host), baseline.getNamespaceImportFixes(content, filename, host), use);
+	}
+});
+
+test('release compatibility: exported functions used inside write targets keep receiver checks', () => {
+	for (const use of ['items[call()] = 1;', 'items[call]++;', 'items[(() => { return call(); })()] = 1;']) {
+		const host = context({ 'lib.ts': `export function call() { return "item"; } ${use}` });
+		const content = "import * as utils from './lib';\nutils.call();";
+		assert.deepEqual(current.getNamespaceImportFixes(content, filename, host), baseline.getNamespaceImportFixes(content, filename, host), use);
+	}
+});
+
 test('release compatibility: local JSX options survive a missing extended config', () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), 'import-authority-config-parity-'));
 	const configFile = path.join(directory, 'tsconfig.json');

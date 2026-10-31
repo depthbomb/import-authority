@@ -98,7 +98,7 @@ export function planNamespaceImports(source: SourceFile, imports: ImportDeclarat
 				break;
 			}
 
-			if (member.optional || reference.written) {
+			if (member.optional || reference.written && !reference.typeOnly) {
 				reason = 'The namespace has optional access or writes.';
 				break;
 			}

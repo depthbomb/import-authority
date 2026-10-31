@@ -11,7 +11,6 @@ type Expression = {
 	end:             number;
 	reference?:      Reference;
 	depth:           number;
-	targets:         Reference[];
 	function?:       FunctionInfo;
 	commonJsExport?: string;
 };
@@ -38,6 +37,7 @@ class Parser {
 	private end = 0;
 	private scope: Scope;
 	private allowIn = true;
+	private statementReferences: Reference[] = [];
 	private readonly functions: FunctionInfo[] = [];
 	private readonly scanner: Scanner;
 	private readonly source: SourceFile;
@@ -219,6 +219,7 @@ class Parser {
 			written: false,
 		};
 		this.source.references.push(reference);
+		this.statementReferences.push(reference);
 		this.source.identifierPositions.set(token.start, token.text);
 		if (['this', 'super', 'eval', 'arguments'].includes(token.text)) {
 			for (const fn of this.functions) {
@@ -236,8 +237,14 @@ class Parser {
 	}
 
 	private statement(top = false, exported = false): ImportDeclaration | undefined {
-		this.jsdoc();
-		return this.readStatement(top, exported);
+		const previous = this.statementReferences;
+		this.statementReferences = [];
+		try {
+			this.jsdoc();
+			return this.readStatement(top, exported);
+		} finally {
+			this.statementReferences = previous;
+		}
 	}
 
 	private readStatement(top: boolean, exported: boolean): ImportDeclaration | undefined {
@@ -1240,7 +1247,14 @@ class Parser {
 	}
 
 	private write(expression: Expression): void {
-		for (const reference of expression.targets) {
+		// Match the compiler's conservative ancestor walk, including computed keys
+		// and call arguments, while stopping at nested statement boundaries.
+		for (let index = this.statementReferences.length - 1; index >= 0; index--) {
+			const reference = this.statementReferences[index];
+			if (reference.start < expression.start) {
+				break;
+			}
+
 			reference.written = true;
 		}
 	}
@@ -1260,7 +1274,6 @@ class Parser {
 					start:   left.start,
 					end:     this.end,
 					depth:   0,
-					targets: []
 				};
 				continue;
 			}
@@ -1306,7 +1319,6 @@ class Parser {
 				start:   left.start,
 				end:     this.end,
 				depth:   0,
-				targets: []
 			};
 		}
 
@@ -1319,7 +1331,6 @@ class Parser {
 			start:   token.start,
 			end:     this.end,
 			depth:   0,
-			targets: []
 		});
 		if (token.kind === 'string' || token.kind === 'number') {
 			this.next();
@@ -1446,14 +1457,13 @@ class Parser {
 		}
 
 		if (this.take('[')) {
-			const targets: Reference[] = [];
 			while (!this.at(']')) {
 				if (this.take(',')) {
 					continue;
 				}
 
 				this.take('...');
-				targets.push(...this.expression(2).targets);
+				this.expression(2);
 				if (!this.take(',')) {
 					break;
 				}
@@ -1461,10 +1471,7 @@ class Parser {
 
 			this.expect(']');
 
-			return {
-				...empty(),
-				targets
-			};
+			return empty();
 		}
 
 		if (this.at('{')) {
@@ -1492,7 +1499,6 @@ class Parser {
 			return {
 				...empty(),
 				reference,
-				targets: [reference]
 			};
 		}
 
@@ -1583,7 +1589,6 @@ class Parser {
 					start:   expression.start,
 					end:     this.end,
 					depth:   0,
-					targets: []
 				};
 				if (construct) {
 					break;
@@ -1601,7 +1606,6 @@ class Parser {
 					start:   expression.start,
 					end:     this.end,
 					depth:   0,
-					targets: []
 				};
 				continue;
 			}
@@ -1623,10 +1627,9 @@ class Parser {
 
 	private object(): Expression {
 		const start = this.next().start;
-		const targets: Reference[] = [];
 		while (!this.at('}')) {
 			if (this.take('...')) {
-				targets.push(...this.expression(2).targets);
+				this.expression(2);
 			} else {
 				if (['async', 'get', 'set'].includes(this.token.text) && !['(', ':', ',', '}', '='].includes(this.scanner.peek().text)) {
 					this.next();
@@ -1636,11 +1639,11 @@ class Parser {
 				const memberStart = this.token.start;
 				const name        = this.propertyName();
 				if (this.take(':')) {
-					targets.push(...this.expression(2).targets);
+					this.expression(2);
 				} else if (this.at('(') || this.at('<')) {
 					this.functionTail(memberStart);
 				} else if (name?.kind === 'identifier') {
-					targets.push(this.reference(name));
+					this.reference(name);
 					if (this.take('=')) {
 						this.expression(2);
 					}
@@ -1660,7 +1663,6 @@ class Parser {
 			start,
 			end:   this.end,
 			depth: 0,
-			targets
 		};
 	}
 
