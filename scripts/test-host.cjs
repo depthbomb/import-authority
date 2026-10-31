@@ -6,7 +6,8 @@ const { runTests } = require('@vscode/test-electron');
 const { baselineBundle, revision } = require('./compatibility-baseline.cjs');
 
 async function main() {
-	const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'import-authority-host-'));
+	// macOS limits Unix socket paths used by VS Code's profile to 103 bytes.
+	const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-host-'));
 	const manifest = require('../package.json');
 	// Supply the Vue language id without installing a third-party language server.
 	manifest.contributes.languages = [{ id: 'vue', extensions: ['.vue'] }];
