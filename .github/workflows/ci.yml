@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,6 +16,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    env:
+      IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,13 +41,34 @@ jobs:
           yarn test:host stable
         shell: pwsh
       - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: host-results-${{ runner.os }}
+          path: ${{ runner.temp }}/import-authority-reports
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v7
         with:
           name: import-authority-vsix-${{ runner.os }}
           path: '*.vsix'
           if-no-files-found: error
   corpus:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: vue, shard: 0, shards: 1 }
+          - { project: zustand, shard: 0, shards: 1 }
+          - { project: tanstack-query, shard: 0, shards: 1 }
+          - { project: typescript, shard: 0, shards: 4 }
+          - { project: typescript, shard: 1, shards: 4 }
+          - { project: typescript, shard: 2, shards: 4 }
+          - { project: typescript, shard: 3, shards: 4 }
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      IMPORT_AUTHORITY_CORPUS_SHARD: ${{ matrix.shard }}
+      IMPORT_AUTHORITY_CORPUS_SHARDS: ${{ matrix.shards }}
+      IMPORT_AUTHORITY_REPORT_DIR: ${{ runner.temp }}/import-authority-reports
     steps:
       - uses: actions/checkout@v7
         with:
@@ -54,4 +78,10 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: yarn install --immutable
-      - run: node scripts/prepare-corpus.cjs
+      - run: node scripts/prepare-corpus.cjs ${{ matrix.project }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: corpus-${{ matrix.project }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/import-authority-reports
+          if-no-files-found: error

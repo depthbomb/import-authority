@@ -11,13 +11,23 @@ const baseline = loadBaseline();
 const directories = process.argv.slice(2);
 assert.ok(directories.length, 'Pass at least one source directory.');
 const failures = [];
-const namespaceLimit = Number(process.env.IMPORT_AUTHORITY_CORPUS_NAMESPACE_LIMIT ?? 32);
-assert.ok(Number.isInteger(namespaceLimit) && namespaceLimit >= 0);
+const shardCount = Number(process.env.IMPORT_AUTHORITY_CORPUS_SHARDS ?? 1);
+const shardIndex = Number(process.env.IMPORT_AUTHORITY_CORPUS_SHARD ?? 0);
+assert.ok(Number.isInteger(shardCount) && shardCount > 0);
+assert.ok(Number.isInteger(shardIndex) && shardIndex >= 0 && shardIndex < shardCount);
 const counts = { files: 0, valid: 0, invalid: 0, imports: 0, namespaceEligible: 0, namespace: 0 };
-let namespaceInProject = 0;
+let discovered = 0;
+let completed = false;
+const reportDirectory = process.env.IMPORT_AUTHORITY_REPORT_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'import-authority-corpus-results-'));
+fs.mkdirSync(reportDirectory, { recursive: true });
+const report = path.join(reportDirectory, `corpus-${shardIndex}.json`);
+
+function saveReport() {
+	fs.writeFileSync(report, JSON.stringify({ revision, shardIndex, shardCount, discovered, completed, counts, failures }, (_key, value) => value instanceof Set ? [...value] : value, 2));
+}
 
 function walk(directory) {
-	for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+	for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
 		if (entry.isSymbolicLink() || ['node_modules', '.git'].includes(entry.name)) continue;
 		const file = path.join(directory, entry.name);
 		if (entry.isDirectory()) {
@@ -25,10 +35,14 @@ function walk(directory) {
 			continue;
 		}
 		if (!/\.(?:[cm]?[jt]sx?|vue)$/.test(file)) continue;
+		if (discovered++ % shardCount !== shardIndex) continue;
 		const content = fs.readFileSync(file, 'utf8');
 		if (process.env.IMPORT_AUTHORITY_CORPUS_TRACE) console.error(file);
 		counts.files++;
-		if (counts.files % 100 === 0) console.error(JSON.stringify({ progress: counts, failures: failures.length }));
+		if (counts.files % 100 === 0) {
+			saveReport();
+			console.error(JSON.stringify({ progress: counts, failures: failures.length }));
+		}
 		try {
 			if (!file.endsWith('.vue')) {
 				const compiler = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
@@ -48,27 +62,25 @@ function walk(directory) {
 			assert.equal(current.removeUnusedImportsByScan(content, file), baseline.removeUnusedImportsByScan(content, file), 'fallback removal differs');
 			if (/import\s+\*\s+as\b/.test(content)) {
 				counts.namespaceEligible++;
-				// Each old namespace analysis builds the entire dependency graph again.
-				// Bound that extra work; organization and quick fixes still cover every file.
-				if (namespaceInProject >= namespaceLimit) continue;
-				namespaceInProject++;
 				counts.namespace++;
 				assert.deepEqual(current.getNamespaceImportFixes(content, file), baseline.getNamespaceImportFixes(content, file), 'namespace fixes/reasons differ');
 			}
 		} catch (error) {
 			failures.push({ file, message: error.message, actual: error.actual, expected: error.expected });
+			saveReport();
 			console.error(`${file}: ${error.message.split('\n')[0]}`);
 		}
 	}
 }
 
-directories.forEach(directory => {
-	namespaceInProject = 0;
-	walk(path.resolve(directory));
-});
-const report = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'import-authority-corpus-results-')), 'results.json');
-fs.writeFileSync(report, JSON.stringify({ revision, counts, failures }, (_key, value) => value instanceof Set ? [...value] : value, 2));
-console.log(JSON.stringify({ revision, counts, failures: failures.length, report }));
+try {
+	directories.forEach(directory => walk(path.resolve(directory)));
+	assert.ok(counts.files, 'The selected corpus shard contains no source files.');
+	completed = true;
+} finally {
+	saveReport();
+}
+console.log(JSON.stringify({ revision, shardIndex, shardCount, discovered, counts, failures: failures.length, report }));
 if (failures.length) {
 	console.error(failures.map(({ file, message }) => `${file}: ${message.split('\n')[0]}`).join('\n'));
 	process.exitCode = 1;
