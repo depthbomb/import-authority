@@ -26,8 +26,14 @@ function receiverIndependent(exported: ResolvedExport): boolean {
 		return false;
 	}
 
-	return !exported.source.references.some(reference => reference.name === 'eval'
-		|| reference.written && resolveReference(reference) === binding);
+	// The original receiver check also inspected property and declaration names.
+	for (const [position, name] of exported.source.identifierPositions) {
+		if (name === 'eval' || name === 'arguments' && position >= binding.function.start && position < binding.function.end) {
+			return false;
+		}
+	}
+
+	return !exported.source.references.some(reference => reference.written && resolveReference(reference) === binding);
 }
 
 export function planNamespaceImports(source: SourceFile, imports: ImportDeclaration[], context: NamespaceConversionContext = {}): NamespaceConversionResult {

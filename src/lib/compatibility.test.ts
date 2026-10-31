@@ -141,6 +141,24 @@ test('release compatibility: exported functions used inside write targets keep r
 	}
 });
 
+test('release compatibility: receiver checks include property and declaration identifiers', () => {
+	for (const library of [
+		'export function call(node) { return node.arguments; }',
+		'export function call() { return { arguments: [] }; }',
+		'export const call = arguments => arguments;',
+		'export const call = function arguments() { return 1; };',
+		'export function call(node: { arguments: string[] }) { return node; }',
+		'export function call() { return 1; } const object = { eval: 1 };',
+		'export function call() { return 1; } export { call as eval };',
+		'export function call(node) { return node["arguments"]; }',
+		'export function call() { return "eval"; }',
+	]) {
+		const host = context({ 'lib.ts': library });
+		const content = "import * as utils from './lib';\nutils.call();";
+		assert.deepEqual(current.getNamespaceImportFixes(content, filename, host), baseline.getNamespaceImportFixes(content, filename, host), library);
+	}
+});
+
 test('release compatibility: local JSX options survive a missing extended config', () => {
 	const directory = mkdtempSync(path.join(os.tmpdir(), 'import-authority-config-parity-'));
 	const configFile = path.join(directory, 'tsconfig.json');
