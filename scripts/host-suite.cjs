@@ -49,7 +49,24 @@ exports.run = async () => {
 		await actions(document, 'source.organizeImports.importAuthority');
 		const setting = vscode.workspace.getConfiguration('editor', document).get('codeActionsOnSave');
 		assert.equal(setting['source.organizeImports.importAuthority'], 'explicit');
-		assert.equal(await document.save(), true);
+		const events = [];
+		const subscriptions = [
+			vscode.workspace.onWillSaveTextDocument(event => {
+				if (event.document === document) events.push({ event: 'willSave', reason: event.reason, version: document.version });
+			}),
+			vscode.workspace.onDidChangeTextDocument(event => {
+				if (event.document === document) events.push({ event: 'change', version: document.version });
+			}),
+			vscode.workspace.onDidSaveTextDocument(saved => {
+				if (saved === document) events.push({ event: 'didSave', version: document.version });
+			}),
+		];
+		try {
+			assert.equal(await document.save(), true);
+		} finally {
+			console.log(JSON.stringify({ save: document.uri.toString(), language: document.languageId, dirty: document.isDirty, events }));
+			subscriptions.forEach(subscription => subscription.dispose());
+		}
 	};
 
 	const document = await open('command.ts', source);

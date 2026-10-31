@@ -7,7 +7,7 @@ const { baselineBundle, revision } = require('./compatibility-baseline.cjs');
 
 async function main() {
 	// macOS limits Unix socket paths used by VS Code's profile to 103 bytes.
-	const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-host-'));
+	const temporary = fs.realpathSync(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP ?? os.tmpdir(), 'ia-')));
 	const manifest = require('../package.json');
 	// Supply the Vue language id without installing a third-party language server.
 	manifest.contributes.languages = [{ id: 'vue', extensions: ['.vue'] }];
