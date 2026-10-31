@@ -25,6 +25,7 @@ async function main() {
 			'editor.codeActionsOnSave': { 'source.organizeImports.importAuthority': 'explicit' },
 			'importAuthority.features.enableFormattingProvider': true,
 			'files.autoSave': 'off',
+			'[plaintext]': { 'files.trimTrailingWhitespace': true },
 		}));
 		const resultFile = path.join(extension, 'results.json');
 		await runTests({

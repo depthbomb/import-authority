@@ -28,6 +28,18 @@ exports.run = async () => {
 	const extension = vscode.extensions.getExtension('CaprineLogic.import-authority');
 	assert.ok(extension);
 	await extension.activate();
+	// VS Code registers its save participants after restoring the workbench,
+	// which can happen after extension tests have already started.
+	const probePath = path.join(workspace, 'save-readiness.txt');
+	fs.writeFileSync(probePath, 'ready\n');
+	const probe = await vscode.workspace.openTextDocument(probePath);
+	assert.equal(vscode.workspace.getConfiguration('files', probe).get('trimTrailingWhitespace'), true);
+	await eventually(async () => {
+		await replace(probe, 'ready   \n');
+		assert.equal(await probe.save(), true);
+		return probe.getText() === 'ready\n';
+	}, 'VS Code built-in save participants');
+	fs.unlinkSync(probePath);
 	const results = { version: vscode.version };
 	const source = "import { Zebra } from 'zebra';\nimport { A } from 'a';\nlet value: A;\nconsole.log(Zebra);\n";
 	const open = async (name, text) => {
